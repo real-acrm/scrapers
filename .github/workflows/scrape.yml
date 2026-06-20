@@ -1,0 +1,43 @@
+name: Scrape
+
+on:
+  schedule:
+    - cron: "0 8 * * 1-5"
+      timezone: "Europe/Warsaw"
+    - cron: "0 20 * * 1-5"
+      timezone: "Europe/Warsaw"
+  workflow_dispatch:
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+
+      - name: Run scraper (turso)
+        env:
+          NALEO_LOGIN: ${{ secrets.NALEO_LOGIN }}
+          NALEO_PASSWORD: ${{ secrets.NALEO_PASSWORD }}
+          KAJA_LOGIN: ${{ secrets.KAJA_LOGIN }}
+          KAJA_PASSWORD: ${{ secrets.KAJA_PASSWORD }}
+          GOLDENSNEAKERS_LOGIN: ${{ secrets.GOLDENSNEAKERS_LOGIN }}
+          GOLDENSNEAKERS_PASSWORD: ${{ secrets.GOLDENSNEAKERS_PASSWORD }}
+          BRANDSDISTRIBUTION_LOGIN: ${{ secrets.BRANDSDISTRIBUTION_LOGIN }}
+          BRANDSDISTRIBUTION_PASSWORD: ${{ secrets.BRANDSDISTRIBUTION_PASSWORD }}
+          BRANDSGATEWAY_LOGIN: ${{ secrets.BRANDSGATEWAY_LOGIN }}
+          BRANDSGATEWAY_MEILI_HOST: ${{ secrets.BRANDSGATEWAY_MEILI_HOST }}
+          BRANDSGATEWAY_MEILI_TOKEN: ${{ secrets.BRANDSGATEWAY_MEILI_TOKEN }}
+          BRANDSGATEWAY_MODE: full
+          TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
+          TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
+        run: xvfb-run --auto-servernum --server-args='-screen 0 1280x800x24' npm run scrape

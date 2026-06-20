@@ -1,0 +1,38 @@
+{
+  "name": "b2b-naleo-scraper",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "scrape": "PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true tsx index.ts",
+    "scrape:staging": "dotenv -e .env.staging -- npm run scrape",
+    "scrape:prod": "dotenv -e .env.production -- npm run scrape",
+    "api": "tsx api/server.ts",
+    "api:staging": "dotenv -e .env.staging -- npm run api",
+    "api:prod": "dotenv -e .env.production -- npm run api",
+    "migrate": "tsx db/migrate.ts",
+    "migrate:staging": "dotenv -e .env.staging -- npm run migrate",
+    "migrate:prod": "dotenv -e .env.production -- npm run migrate",
+    "seed": "tsx db/seed.ts",
+    "db:reset": "rm -f var/local.db var/local.db-shm var/local.db-wal && npm run migrate && npm run seed",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@hono/node-server": "^2.0.5",
+    "@libsql/client": "^0.17.4",
+    "dotenv": "^16.6.1",
+    "hono": "^4.12.26",
+    "playwright": "^1.49.0",
+    "puppeteer": "^24.41.0",
+    "puppeteer-extra": "^3.3.6",
+    "puppeteer-extra-plugin-stealth": "^2.11.2",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "@types/node": "^25.6.0",
+    "dotenv-cli": "^7.4.4",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0",
+    "vitest": "^4.1.9"
+  }
+}

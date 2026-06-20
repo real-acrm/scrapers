@@ -1,0 +1,27 @@
+node_modules/
+.venv/
+
+# runtime
+var/
+*.db
+*.db-shm
+*.db-wal
+output.json
+
+# env per environment
+.env
+.env.local
+.env.staging
+.env.production
+
+# build / tooling
+dist/
+coverage/
+.DS_Store
+
+# misc
+.remember
+.playwright-mcp/
+
+# Google service account (legacy, do not commit)
+scraper-*.json

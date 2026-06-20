@@ -1,16 +1,53 @@
 name: Scrape
 
+# GitHub Actions cron is UTC. Two timezone groups exist:
+#   cet (UTC+1/+2): 07:00 UTC ≈ 08:00 local, 19:00 UTC ≈ 20:00 local
+#   eet (UTC+2/+3): 06:00 UTC ≈ 08:00 local, 18:00 UTC ≈ 20:00 local
+# Each scraper declares its tz in the matrix; the job `if:` routes each
+# cron to the matching group.
 on:
   schedule:
-    - cron: "0 8 * * 1-5"
-      timezone: "Europe/Warsaw"
-    - cron: "0 20 * * 1-5"
-      timezone: "Europe/Warsaw"
+    - cron: "0 7 * * 1-5"
+    - cron: "0 19 * * 1-5"
+    - cron: "0 6 * * 1-5"
+    - cron: "0 18 * * 1-5"
   workflow_dispatch:
+    inputs:
+      scraper:
+        description: "Which scraper to run (or 'all')"
+        type: choice
+        default: "all"
+        options:
+          - all
+          - naleo
+          - kajasport
+          - goldensneakers
+          - brandsdistribution
+          - buy2bee
+          - brandsgateway
 
 jobs:
   scrape:
     runs-on: ubuntu-latest
+    name: scrape (${{ matrix.scraper }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { scraper: naleo,              tz: cet }
+          - { scraper: kajasport,          tz: cet }
+          - { scraper: goldensneakers,     tz: cet }
+          - { scraper: brandsdistribution, tz: cet }
+          - { scraper: buy2bee,            tz: cet }
+          - { scraper: brandsgateway,      tz: eet }
+    if: >
+      (github.event_name == 'workflow_dispatch' &&
+        (github.event.inputs.scraper == 'all' ||
+         github.event.inputs.scraper == matrix.scraper))
+      ||
+      (matrix.tz == 'cet' && contains(fromJSON('["0 7 * * 1-5","0 19 * * 1-5"]'), github.event.schedule))
+      ||
+      (matrix.tz == 'eet' && contains(fromJSON('["0 6 * * 1-5","0 18 * * 1-5"]'), github.event.schedule))
     steps:
       - uses: actions/checkout@v4
 
@@ -24,7 +61,7 @@ jobs:
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium
 
-      - name: Run scraper (turso)
+      - name: Run scraper (${{ matrix.scraper }})
         env:
           NALEO_LOGIN: ${{ secrets.NALEO_LOGIN }}
           NALEO_PASSWORD: ${{ secrets.NALEO_PASSWORD }}
@@ -34,10 +71,12 @@ jobs:
           GOLDENSNEAKERS_PASSWORD: ${{ secrets.GOLDENSNEAKERS_PASSWORD }}
           BRANDSDISTRIBUTION_LOGIN: ${{ secrets.BRANDSDISTRIBUTION_LOGIN }}
           BRANDSDISTRIBUTION_PASSWORD: ${{ secrets.BRANDSDISTRIBUTION_PASSWORD }}
+          BUY2BEE_LOGIN: ${{ secrets.BUY2BEE_LOGIN }}
+          BUY2BEE_PASSWORD: ${{ secrets.BUY2BEE_PASSWORD }}
           BRANDSGATEWAY_LOGIN: ${{ secrets.BRANDSGATEWAY_LOGIN }}
           BRANDSGATEWAY_MEILI_HOST: ${{ secrets.BRANDSGATEWAY_MEILI_HOST }}
           BRANDSGATEWAY_MEILI_TOKEN: ${{ secrets.BRANDSGATEWAY_MEILI_TOKEN }}
           BRANDSGATEWAY_MODE: full
           TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
           TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
-        run: xvfb-run --auto-servernum --server-args='-screen 0 1280x800x24' npm run scrape
+        run: xvfb-run --auto-servernum --server-args='-screen 0 1280x800x24' npm run scrape -- ${{ matrix.scraper }}

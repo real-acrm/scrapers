@@ -38,15 +38,20 @@ export class NaleoScraper extends BaseScraper {
       await page.waitForSelector("li.nav-item");
 
       const sections = ["Kobieta", "Mężczyzna", "Dziecko", "Akcesoria"];
+      console.log(`[${this.id}] ${sections.length} top categories: ${sections.join(", ")}`);
       const navs = [];
       for (const label of sections) {
         navs.push(...(await extractSearchListNav(page, label)));
       }
+      const totalLeaves = navs.reduce((n, c) => n + c.children.length, 0);
+      console.log(`[${this.id}] ${navs.length} subcategories, ${totalLeaves} leaf categories`);
 
+      let leafIdx = 0;
       for (const cat of navs) {
         for (const child of cat.children) {
+          leafIdx++;
           console.log(
-            `[${this.id}] category ${cat.topCategory} / ${cat.category} / ${child.category}`,
+            `[${this.id}] -> category "${cat.topCategory} > ${cat.category} > ${child.category}" (${leafIdx}/${totalLeaves})`,
           );
           await page.goto(`${child.href}?portions=300`, {
             waitUntil: "domcontentloaded",

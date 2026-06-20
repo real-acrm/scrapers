@@ -9,10 +9,12 @@ export async function* paginateIndex<T>(opts: {
   indexUid: string;
   batch?: number;
   mapHit: (hit: Record<string, unknown>) => T | null;
+  onFirstResponse?: (meta: { estimatedTotalHits: number | null }) => void;
 }): AsyncGenerator<T> {
   const batch = opts.batch ?? 1000;
   const url = `${opts.host.replace(/\/$/, "")}/multi-search`;
   let offset = 0;
+  let firstReported = false;
   for (;;) {
     const body = {
       queries: [{ indexUid: opts.indexUid, limit: batch, offset }],
@@ -31,9 +33,20 @@ export async function* paginateIndex<T>(opts: {
       );
     }
     const json = (await res.json()) as {
-      results: { hits: Record<string, unknown>[] }[];
+      results: {
+        hits: Record<string, unknown>[];
+        estimatedTotalHits?: number;
+        totalHits?: number;
+      }[];
     };
-    const hits = json.results?.[0]?.hits ?? [];
+    const result = json.results?.[0];
+    const hits = result?.hits ?? [];
+    if (!firstReported) {
+      firstReported = true;
+      const total =
+        result?.totalHits ?? result?.estimatedTotalHits ?? null;
+      opts.onFirstResponse?.({ estimatedTotalHits: total });
+    }
     if (hits.length === 0) return;
     for (const hit of hits) {
       const out = opts.mapHit(hit);

@@ -8,6 +8,7 @@ import type { BaseScraper } from "../scrapers/base.js";
 
 export async function runScrapers(scrapers: BaseScraper[]): Promise<void> {
   await migrate();
+  const failed: string[] = [];
   for (const s of scrapers) {
     console.log(`[${s.id}] starting`);
     await upsertWholesaler({
@@ -28,6 +29,10 @@ export async function runScrapers(scrapers: BaseScraper[]): Promise<void> {
       console.log(`[${s.id}] done, ${count} products`);
     } catch (err) {
       console.error(`[${s.id}] failed after ${count} products:`, err);
+      failed.push(s.id);
     }
+  }
+  if (failed.length > 0) {
+    throw new Error(`scrapers failed: ${failed.join(", ")}`);
   }
 }

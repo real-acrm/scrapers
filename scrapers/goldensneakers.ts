@@ -5,6 +5,7 @@ import { join } from "path";
 import type { Page } from "puppeteer";
 import { BaseScraper } from "./base.js";
 import type { ScrapedProduct } from "../pipeline/types.js";
+import * as XLSX from "xlsx";
 import { parseGoldensneakersWorkbook } from "./lib/goldensneakersXlsx.js";
 
 const LOGIN_URL = "https://www.goldensneakers.net/users/login/";
@@ -57,7 +58,15 @@ export class GoldensneakersScraper extends BaseScraper {
       const buf = await this.downloadExport(page);
       console.log(`[${this.id}] downloaded catalog (${buf.byteLength} bytes)`);
 
-      for (const product of parseGoldensneakersWorkbook(buf)) {
+      // Peek workbook structure for visibility before the (potentially long) parse.
+      const wb = XLSX.read(buf, { type: "buffer", cellDates: false });
+      console.log(
+        `[${this.id}] workbook sheets (${wb.SheetNames.length}): ${wb.SheetNames.join(", ")}`,
+      );
+
+      const products = parseGoldensneakersWorkbook(buf);
+      console.log(`[${this.id}] parsed ${products.length} products from workbook`);
+      for (const product of products) {
         yield product;
       }
     } finally {

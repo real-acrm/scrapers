@@ -74,6 +74,11 @@ export class BrandsgatewayScraper extends BaseScraper {
       token,
       indexUid: "product",
       mapHit: (hit) => mapHit(hit as MeiliHit, this.id),
+      onFirstResponse: ({ estimatedTotalHits }) => {
+        console.log(
+          `[${this.id}] meilisearch reports ${estimatedTotalHits ?? "unknown"} total hits`,
+        );
+      },
     })) {
       n++;
       if (n % 1000 === 0) console.log(`[${this.id}] ${n} products yielded`);

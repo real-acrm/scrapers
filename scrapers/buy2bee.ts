@@ -168,7 +168,9 @@ export class Buy2beeScraper extends BaseScraper {
             .filter((x) => (labels as string[]).includes(x.label)),
         L1_LABELS,
       );
-      console.log(`[${this.id}] nav: ${navs.map((n) => n.label).join(", ")}`);
+      console.log(
+        `[${this.id}] ${navs.length} top categories: ${navs.map((n) => n.label).join(", ")}`,
+      );
       if (navs.length === 0) {
         const body = await page.evaluate(() =>
           document.body.innerText.slice(0, 400),
@@ -180,12 +182,16 @@ export class Buy2beeScraper extends BaseScraper {
       }
 
       let listViewToggled = false;
+      let catIdx = 0;
       for (const cat of navs) {
-        console.log(`[${this.id}] category ${cat.label}`);
+        catIdx++;
+        console.log(
+          `[${this.id}] -> category "${cat.label}" (${catIdx}/${navs.length})`,
+        );
         let pageUrl = cat.href;
         let pageNum = 1;
         while (true) {
-          console.log(`========== ${cat.label} page ${pageNum} ==========`);
+          console.log(`[${this.id}]   page ${pageNum} of "${cat.label}"`);
           await page.goto(pageUrl, { waitUntil: "domcontentloaded" });
           await pause();
 
@@ -241,7 +247,7 @@ export class Buy2beeScraper extends BaseScraper {
             return isNext ? last.href : null;
           });
           if (!nextHref || nextHref === pageUrl) {
-            console.log("No more pages.");
+            console.log(`[${this.id}]   no more pages for "${cat.label}" (${pageNum} total)`);
             break;
           }
           pageUrl = nextHref;

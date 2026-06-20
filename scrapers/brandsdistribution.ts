@@ -117,11 +117,19 @@ export class BrandsdistributionScraper extends BaseScraper {
       await page.waitForSelector("ul.filter-sublist", { timeout: 30000 });
 
       const cats = await this.harvestCategories(page);
+      const topLevels = [...new Set(cats.map((c) => c.l1))];
+      console.log(
+        `[${this.id}] ${topLevels.length} top categories: ${topLevels.join(", ")}`,
+      );
       console.log(`[${this.id}] ${cats.length} leaf categories`);
 
+      let idx = 0;
       for (const cat of cats) {
-        console.log(`[${this.id}] category ${cat.l1} / ${cat.l2}`);
-        yield* this.scrapeCategory(page, cat);
+        idx++;
+        console.log(
+          `[${this.id}] -> category "${cat.l1} > ${cat.l2}" (${idx}/${cats.length})`,
+        );
+        yield* this.scrapeCategory(page, cat, idx, cats.length);
       }
     } finally {
       await browser.close();
@@ -229,6 +237,8 @@ export class BrandsdistributionScraper extends BaseScraper {
   private async *scrapeCategory(
     page: Page,
     cat: LeafCategory,
+    catIdx = 0,
+    catTotal = 0,
   ): AsyncGenerator<ScrapedProduct> {
     const baseUrl = new URL(cat.href, HOME);
     const params = baseUrl.search;
@@ -251,6 +261,10 @@ export class BrandsdistributionScraper extends BaseScraper {
     console.log(`[${this.id}]   ${totalPages} page(s)`);
 
     for (let p = 1; p <= totalPages; p++) {
+      console.log(
+        `[${this.id}]   page ${p}/${totalPages} of "${cat.l1} > ${cat.l2}"` +
+          (catTotal > 0 ? ` (cat ${catIdx}/${catTotal})` : ""),
+      );
       if (p > 1) {
         await page.goto(`${HOME}/en/catalog/${p}${params}`, {
           waitUntil: "domcontentloaded",

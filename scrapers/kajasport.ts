@@ -51,7 +51,15 @@ export class KajasportScraper extends BaseScraper {
       });
 
       const navs = await extractSearchListNav(page, "ODZIEŻ");
+      const totalTargets = navs.reduce(
+        (n, c) => n + (c.children.length > 0 ? c.children.length : 1),
+        0,
+      );
+      console.log(
+        `[${this.id}] ${navs.length} subcategories under ODZIEŻ, ${totalTargets} leaf targets`,
+      );
 
+      let targetIdx = 0;
       for (const cat of navs) {
         // Some L2s (e.g. Dresy, Kurtki) have no L3 children — scrape them directly.
         const targets =
@@ -69,7 +77,10 @@ export class KajasportScraper extends BaseScraper {
                 },
               ];
         for (const t of targets) {
-          console.log(`[${this.id}] category ${t.label}`);
+          targetIdx++;
+          console.log(
+            `[${this.id}] -> category "${t.label}" (${targetIdx}/${totalTargets})`,
+          );
           await page.goto(`${t.href}?portions=300`, {
             waitUntil: "domcontentloaded",
           });

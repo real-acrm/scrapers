@@ -4,6 +4,12 @@
   "type": "module",
   "scripts": {
     "scrape": "PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true tsx index.ts",
+    "scrape:naleo": "npm run scrape -- naleo",
+    "scrape:kajasport": "npm run scrape -- kajasport",
+    "scrape:goldensneakers": "npm run scrape -- goldensneakers",
+    "scrape:brandsdistribution": "npm run scrape -- brandsdistribution",
+    "scrape:brandsgateway": "npm run scrape -- brandsgateway",
+    "scrape:buy2bee": "npm run scrape -- buy2bee",
     "scrape:staging": "dotenv -e .env.staging -- npm run scrape",
     "scrape:prod": "dotenv -e .env.production -- npm run scrape",
     "api": "tsx api/server.ts",

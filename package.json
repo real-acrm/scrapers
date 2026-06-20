@@ -13,6 +13,7 @@
     "scrape:staging": "dotenv -e .env.staging -- npm run scrape",
     "scrape:prod": "dotenv -e .env.production -- npm run scrape",
     "api": "tsx api/server.ts",
+    "start": "tsx api/server.ts",
     "api:staging": "dotenv -e .env.staging -- npm run api",
     "api:prod": "dotenv -e .env.production -- npm run api",
     "migrate": "tsx db/migrate.ts",
@@ -37,13 +38,13 @@
     "puppeteer": "^24.41.0",
     "puppeteer-extra": "^3.3.6",
     "puppeteer-extra-plugin-stealth": "^2.11.2",
+    "tsx": "^4.19.0",
     "xlsx": "^0.18.5",
     "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/node": "^25.6.0",
     "dotenv-cli": "^7.4.4",
-    "tsx": "^4.19.0",
     "typescript": "^5.7.0",
     "vitest": "^4.1.9"
   }

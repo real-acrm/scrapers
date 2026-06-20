@@ -7,8 +7,12 @@ import { snapshots } from "./routes/snapshots.js";
 import { brands } from "./routes/brands.js";
 import { categories } from "./routes/categories.js";
 import { deals } from "./routes/deals.js";
+import { apiKeyAuth } from "./middleware/auth.js";
 
 const app = createApp();
+app.use("/wholesalers/*", apiKeyAuth);
+app.use("/products/*", apiKeyAuth);
+app.use("/deals/*", apiKeyAuth);
 app.route("/wholesalers", wholesalers);
 app.route("/wholesalers", brands);
 app.route("/wholesalers", categories);

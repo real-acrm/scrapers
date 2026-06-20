@@ -60,6 +60,10 @@ Migrations are idempotent (`IF NOT EXISTS` everywhere) — safe to re-run agains
 
 API documentation: with the server running (`npm run api`), open http://localhost:3000/docs for Swagger UI or http://localhost:3000/openapi.json for the raw spec.
 
+## API keys
+
+Data endpoints (`/wholesalers`, `/products`, `/deals`) require a publishable `pk_…` key passed as `Authorization: Bearer <key>`. `/docs` and `/openapi.json` stay open. Manage keys via CLI: `npm run keys:create -- "frontend-prod"` prints a new key once, `npm run keys:list` shows all keys, `npm run keys:revoke -- <id>` revokes one (cache TTL is 60s). In Swagger UI click "Authorize" and paste the key to try requests in the browser.
+
 ## CI
 
 `.github/workflows/scrape.yml` runs scheduled scrapes against the Turso DB configured in repo secrets (`TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN`, `LOGIN`, `PASSWORD`). No `.env` file in CI — secrets are injected directly into the process env.

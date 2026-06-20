@@ -255,6 +255,66 @@ export async function pickProductsForDetailRefresh(
   }));
 }
 
+export async function findApiKey(
+  key: string,
+): Promise<{ id: number; revoked: boolean } | null> {
+  const rs = await getDb().execute({
+    sql: `SELECT id, revoked_at FROM api_keys WHERE key = ?`,
+    args: [key],
+  });
+  const row = rs.rows[0];
+  if (!row) return null;
+  return { id: Number(row.id), revoked: row.revoked_at != null };
+}
+
+export async function markApiKeyUsed(id: number): Promise<void> {
+  await getDb().execute({
+    sql: `UPDATE api_keys SET last_used_at = ? WHERE id = ?`,
+    args: [new Date().toISOString(), id],
+  });
+}
+
+export async function createApiKey(args: {
+  key: string;
+  label: string;
+}): Promise<number> {
+  const rs = await getDb().execute({
+    sql: `INSERT INTO api_keys (key, label, created_at) VALUES (?, ?, ?) RETURNING id`,
+    args: [args.key, args.label, new Date().toISOString()],
+  });
+  return Number(rs.rows[0].id);
+}
+
+export async function listApiKeys(): Promise<
+  {
+    id: number;
+    key: string;
+    label: string;
+    created_at: string;
+    last_used_at: string | null;
+    revoked_at: string | null;
+  }[]
+> {
+  const rs = await getDb().execute(
+    `SELECT id, key, label, created_at, last_used_at, revoked_at FROM api_keys ORDER BY id`,
+  );
+  return rs.rows.map((r) => ({
+    id: Number(r.id),
+    key: String(r.key),
+    label: String(r.label),
+    created_at: String(r.created_at),
+    last_used_at: r.last_used_at == null ? null : String(r.last_used_at),
+    revoked_at: r.revoked_at == null ? null : String(r.revoked_at),
+  }));
+}
+
+export async function revokeApiKey(id: number): Promise<void> {
+  await getDb().execute({
+    sql: `UPDATE api_keys SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL`,
+    args: [new Date().toISOString(), id],
+  });
+}
+
 export async function insertSnapshot(s: {
   variantId: number;
   wholesalerId: string;

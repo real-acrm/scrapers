@@ -97,6 +97,17 @@ CREATE INDEX IF NOT EXISTS idx_variant_snapshots_wholesaler_time
 CREATE INDEX IF NOT EXISTS idx_products_wholesaler
   ON products (wholesaler_id);
 
+CREATE TABLE IF NOT EXISTS api_keys (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  key             TEXT UNIQUE NOT NULL,
+  label           TEXT NOT NULL,
+  created_at      TEXT NOT NULL,
+  last_used_at    TEXT,
+  revoked_at      TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_api_keys_key ON api_keys (key);
+
 CREATE VIEW IF NOT EXISTS v_variant_promo AS
 SELECT
   vs.*,

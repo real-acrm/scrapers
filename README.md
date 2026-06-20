@@ -58,6 +58,8 @@ turso db tokens create naleo-staging
 
 Migrations are idempotent (`IF NOT EXISTS` everywhere) — safe to re-run against any env.
 
+API documentation: with the server running (`npm run api`), open http://localhost:3000/docs for Swagger UI or http://localhost:3000/openapi.json for the raw spec.
+
 ## CI
 
 `.github/workflows/scrape.yml` runs scheduled scrapes against the Turso DB configured in repo secrets (`TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN`, `LOGIN`, `PASSWORD`). No `.env` file in CI — secrets are injected directly into the process env.

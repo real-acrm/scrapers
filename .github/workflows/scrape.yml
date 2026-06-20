@@ -40,28 +40,39 @@ jobs:
           - { scraper: brandsdistribution, tz: cet }
           - { scraper: buy2bee,            tz: cet }
           - { scraper: brandsgateway,      tz: eet }
-    if: >
-      (github.event_name == 'workflow_dispatch' &&
-        (github.event.inputs.scraper == 'all' ||
-         github.event.inputs.scraper == matrix.scraper))
-      ||
-      (matrix.tz == 'cet' && contains(fromJSON('["0 7 * * 1-5","0 19 * * 1-5"]'), github.event.schedule))
-      ||
-      (matrix.tz == 'eet' && contains(fromJSON('["0 6 * * 1-5","0 18 * * 1-5"]'), github.event.schedule))
+    env:
+      SHOULD_RUN: >-
+        ${{
+          (github.event_name == 'workflow_dispatch' &&
+            (github.event.inputs.scraper == 'all' ||
+             github.event.inputs.scraper == matrix.scraper))
+          ||
+          (matrix.tz == 'cet' && contains(fromJSON('["0 7 * * 1-5","0 19 * * 1-5"]'), github.event.schedule))
+          ||
+          (matrix.tz == 'eet' && contains(fromJSON('["0 6 * * 1-5","0 18 * * 1-5"]'), github.event.schedule))
+        }}
     steps:
-      - uses: actions/checkout@v4
+      - if: env.SHOULD_RUN != 'true'
+        run: echo "Skipping ${{ matrix.scraper }} for this trigger (tz=${{ matrix.tz }})."
 
-      - uses: actions/setup-node@v4
+      - if: env.SHOULD_RUN == 'true'
+        uses: actions/checkout@v4
+
+      - if: env.SHOULD_RUN == 'true'
+        uses: actions/setup-node@v4
         with:
           node-version: 20
 
       - name: Install dependencies
+        if: env.SHOULD_RUN == 'true'
         run: npm install
 
       - name: Install Playwright browsers
+        if: env.SHOULD_RUN == 'true'
         run: npx playwright install --with-deps chromium
 
       - name: Run scraper (${{ matrix.scraper }})
+        if: env.SHOULD_RUN == 'true'
         env:
           NALEO_LOGIN: ${{ secrets.NALEO_LOGIN }}
           NALEO_PASSWORD: ${{ secrets.NALEO_PASSWORD }}

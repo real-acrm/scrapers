@@ -102,10 +102,28 @@ const booleanish = z
   .union([z.boolean(), z.enum(["true", "false", "1", "0"])])
   .transform((v) => v === true || v === "true" || v === "1");
 
+const splitCsv = (s: string) =>
+  s
+    .split(",")
+    .map((x) => x.trim())
+    .filter(Boolean);
+
+const brandList = z
+  .string()
+  .transform(splitCsv)
+  .pipe(z.array(z.string().min(1)).min(1))
+  .openapi({ type: "string", example: "Nike,Adidas" });
+
+const categoryList = z
+  .string()
+  .transform((s) => splitCsv(s).map(Number))
+  .pipe(z.array(z.number().int()).min(1))
+  .openapi({ type: "string", example: "12,13" });
+
 export const ProductsQuerySchema = z.object({
   wholesaler: z.string().optional(),
-  brand: z.string().optional(),
-  category: z.coerce.number().int().optional(),
+  brand: brandList.optional(),
+  category: categoryList.optional(),
   q: z.string().optional(),
   in_stock: booleanish.optional(),
   on_promo: booleanish.optional(),
@@ -117,6 +135,37 @@ export const ProductsQuerySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(200).default(50),
 });
+
+export const FacetsSchema = z
+  .object({
+    wholesaler: z.array(
+      z.object({
+        id: z.string(),
+        name: z.string(),
+        count: z.number().int(),
+      }),
+    ),
+    brand: z.array(
+      z.object({
+        value: z.string(),
+        label: z.string(),
+        count: z.number().int(),
+      }),
+    ),
+    category: z.array(
+      z.object({
+        value: z.string(),
+        label: z.string(),
+        count: z.number().int(),
+      }),
+    ),
+    in_stock: z.object({ true: z.number().int(), false: z.number().int() }),
+    on_promo: z.object({ true: z.number().int(), false: z.number().int() }),
+    price: z.object({ min: z.number(), max: z.number() }),
+  })
+  .openapi("Facets");
+
+export type Facets = z.infer<typeof FacetsSchema>;
 
 export type Wholesaler = z.infer<typeof WholesalerSchema>;
 export type Brand = z.infer<typeof BrandSchema>;

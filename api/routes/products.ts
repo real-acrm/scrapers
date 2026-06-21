@@ -29,20 +29,26 @@ const listRoute = createRoute({
 
 type ListQuery = z.infer<typeof ProductsQuerySchema>;
 
-function buildList(q: ListQuery, forceDeals: boolean) {
+const placeholders = (n: number) =>
+  Array.from({ length: n }, () => "?").join(", ");
+
+// Builds the CTE chain producing a `filtered` row per product (after both
+// product-level WHERE and aggregate-level HAVING). Reused by `/products`
+// listing and `/facets` aggregation.
+function buildFilteredBase(q: ListQuery, forceDeals: boolean) {
   const where: string[] = [];
   const args: InValue[] = [];
   if (q.wholesaler) {
     where.push("p.wholesaler_id = ?");
     args.push(q.wholesaler);
   }
-  if (q.brand) {
-    where.push("b.name = ?");
-    args.push(q.brand);
+  if (q.brand && q.brand.length > 0) {
+    where.push(`b.name IN (${placeholders(q.brand.length)})`);
+    for (const v of q.brand) args.push(v);
   }
-  if (q.category !== undefined) {
-    where.push("p.category_id = ?");
-    args.push(q.category);
+  if (q.category && q.category.length > 0) {
+    where.push(`p.category_id IN (${placeholders(q.category.length)})`);
+    for (const v of q.category) args.push(v);
   }
   if (q.q) {
     where.push("p.name LIKE ?");
@@ -51,7 +57,10 @@ function buildList(q: ListQuery, forceDeals: boolean) {
 
   const having: string[] = [];
   if (q.in_stock === true) having.push("any_in_stock = 1");
+  if (q.in_stock === false) having.push("any_in_stock = 0");
   if (q.on_promo === true) having.push("max_discount > 0");
+  if (q.on_promo === false)
+    having.push("(max_discount IS NULL OR max_discount = 0)");
   if (q.min_price !== undefined) {
     having.push("min_price >= ?");
     args.push(q.min_price);
@@ -62,16 +71,7 @@ function buildList(q: ListQuery, forceDeals: boolean) {
   }
   if (forceDeals) having.push("max_discount > 0");
 
-  const sort = forceDeals ? "discount_desc" : q.sort;
-  const orderBy = {
-    newest: "updated_at DESC",
-    price_asc: "min_price ASC NULLS LAST",
-    price_desc: "min_price DESC NULLS LAST",
-    discount_desc: "max_discount DESC NULLS LAST",
-  }[sort];
-
-  // CTE: latest snapshot per variant via row_number window, then aggregate per product.
-  const sql = `
+  const cte = `
     WITH latest AS (
       SELECT vs.variant_id, vs.price, vs.regular_price, vs.currency, vs.stock,
              CASE WHEN vs.regular_price IS NOT NULL AND vs.price IS NOT NULL AND vs.regular_price > vs.price
@@ -93,6 +93,7 @@ function buildList(q: ListQuery, forceDeals: boolean) {
     base AS (
       SELECT p.id, p.wholesaler_id, p.symbol, p.name, p.image, p.href,
              p.updated_at AS updated_at,
+             p.category_id,
              b.name AS brand,
              COALESCE(a.min_price, NULL) AS min_price,
              COALESCE(a.currency, NULL) AS currency,
@@ -102,15 +103,36 @@ function buildList(q: ListQuery, forceDeals: boolean) {
       LEFT JOIN brands b ON b.id = p.brand_id
       LEFT JOIN agg a ON a.product_id = p.id
       ${where.length ? "WHERE " + where.join(" AND ") : ""}
-    )
-    SELECT *, COUNT(*) OVER () AS total_count FROM base
-    ${having.length ? "WHERE " + having.join(" AND ") : ""}
+    ),
+    filtered AS (
+      SELECT * FROM base
+      ${having.length ? "WHERE " + having.join(" AND ") : ""}
+    )`;
+
+  return { cte, args };
+}
+
+function buildList(q: ListQuery, forceDeals: boolean) {
+  const { cte, args } = buildFilteredBase(q, forceDeals);
+
+  const sort = forceDeals ? "discount_desc" : q.sort;
+  const orderBy = {
+    newest: "updated_at DESC",
+    price_asc: "min_price ASC NULLS LAST",
+    price_desc: "min_price DESC NULLS LAST",
+    discount_desc: "max_discount DESC NULLS LAST",
+  }[sort];
+
+  const sql = `${cte}
+    SELECT *, COUNT(*) OVER () AS total_count FROM filtered
     ORDER BY ${orderBy}
     LIMIT ? OFFSET ?`;
 
   args.push(q.pageSize, (q.page - 1) * q.pageSize);
   return { sql, args };
 }
+
+export { buildFilteredBase };
 
 products.openapi(listRoute, async (c) => {
   const q = c.req.valid("query");

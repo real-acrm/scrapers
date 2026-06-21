@@ -462,7 +462,6 @@ function toScrapedProduct(
     brand: raw.brand,
     image: raw.image,
     href: raw.href,
-    labels: [],
     categoryPath: ctx.categoryPath,
     variants,
   };

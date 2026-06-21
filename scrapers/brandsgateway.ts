@@ -126,9 +126,6 @@ function mapHit(hit: MeiliHit, wholesalerId: string): ScrapedProduct | null {
     brand: hit.brand ?? null,
     image: hit.image ?? null,
     href: hit.permalink ?? null,
-    labels: [hit.gender, hit.brand_tier].filter(
-      (s): s is string => typeof s === "string" && s.length > 0,
-    ),
     categoryPath: pickCategoryPath(hit),
     variants,
   };

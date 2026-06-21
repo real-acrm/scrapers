@@ -20,7 +20,6 @@ export type ScrapedProduct = {
   brand: string | null;
   image: string | null;
   href: string | null;
-  labels: string[];
   categoryPath: string[];
   variants: ScrapedVariant[];
 };

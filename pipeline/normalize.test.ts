@@ -34,7 +34,6 @@ const multiVariantProduct: ScrapedProduct = {
   brand: "TestBrand",
   image: "https://img",
   href: "https://href",
-  labels: ["SALE"],
   categoryPath: ["Kobieta", "Sukienki", "Maxi"],
   variants: [
     {
@@ -86,7 +85,6 @@ describe("normalize", () => {
       brand: null,
       image: null,
       href: null,
-      labels: [],
       categoryPath: ["Mężczyzna", "Koszulki"],
       variants: [
         {

@@ -92,7 +92,6 @@ export async function writeProductBatch(
       categoryId: null,
       image: p.image,
       href: p.href,
-      labelsJson: JSON.stringify(p.labels),
       updatedAt: scrapedAt,
     })
     .onConflictDoUpdate({
@@ -103,7 +102,6 @@ export async function writeProductBatch(
         categoryId: sql`excluded.category_id`,
         image: sql`excluded.image`,
         href: sql`excluded.href`,
-        labelsJson: sql`excluded.labels_json`,
         updatedAt: sql`excluded.updated_at`,
       },
     })

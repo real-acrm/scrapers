@@ -70,7 +70,6 @@ export const products = pgTable(
     ),
     image: text("image"),
     href: text("href"),
-    labelsJson: text("labels_json"),
     updatedAt: text("updated_at").notNull(),
   },
   (t) => [

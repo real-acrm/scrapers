@@ -70,7 +70,6 @@ function parseSheet(
       brand,
       image: imagesByRow?.get(i) ?? null,
       href,
-      labels: [],
       categoryPath: [brand],
       variants,
     });

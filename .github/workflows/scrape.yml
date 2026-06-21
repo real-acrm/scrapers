@@ -1,16 +1,40 @@
 name: Scrape
 
-# GitHub Actions cron is UTC. Two timezone groups exist:
-#   cet (UTC+1/+2): 07:00 UTC ≈ 08:00 local, 19:00 UTC ≈ 20:00 local
-#   eet (UTC+2/+3): 06:00 UTC ≈ 08:00 local, 18:00 UTC ≈ 20:00 local
-# Each scraper declares its tz in the matrix; the job `if:` routes each
-# cron to the matching group.
+# 6-week cycle, 2 runs/week, ~56h apart, anchor hour drifting +4h each week so
+# the 12 ticks cover the full 24h clock for diverse price snapshots. Weekends
+# excluded. All 6 scrapers run together (matrix sequential, max-parallel: 1).
+#
+# Cycle table (UTC):
+#   wk 0: Mon 00:00, Wed 08:00
+#   wk 1: Mon 04:00, Wed 12:00
+#   wk 2: Mon 08:00, Wed 16:00
+#   wk 3: Mon 12:00, Wed 20:00
+#   wk 4: Mon 16:00, Thu 00:00
+#   wk 5: Mon 20:00, Thu 04:00
+#
+# GitHub Actions cron cannot filter by cycle-week, so all 12 ticks are listed
+# below and the `gate` step exits early when the firing cron doesn't match the
+# current cycle week. Net: 12 fires/week, 10 no-op exits, 2 real runs.
 on:
   schedule:
-    - cron: "0 7 * * 1-5"
-    - cron: "0 19 * * 1-5"
-    - cron: "0 6 * * 1-5"
-    - cron: "0 18 * * 1-5"
+    # cycle week 0
+    - cron: "0 0 * * 1"
+    - cron: "0 8 * * 3"
+    # cycle week 1
+    - cron: "0 4 * * 1"
+    - cron: "0 12 * * 3"
+    # cycle week 2
+    - cron: "0 8 * * 1"
+    - cron: "0 16 * * 3"
+    # cycle week 3
+    - cron: "0 12 * * 1"
+    - cron: "0 20 * * 3"
+    # cycle week 4
+    - cron: "0 16 * * 1"
+    - cron: "0 0 * * 4"
+    # cycle week 5
+    - cron: "0 20 * * 1"
+    - cron: "0 4 * * 4"
   workflow_dispatch:
     inputs:
       scraper:
@@ -32,51 +56,70 @@ jobs:
     name: scrape (${{ matrix.scraper }})
     strategy:
       fail-fast: false
-      # Scrapers run one at a time against the shared sqld. The order below is
+      # Scrapers run one at a time against the shared db. The order below is
       # the execution sequence — small/fast ones first, brandsgateway (biggest)
       # mid-run while the DB is warm but not heavily loaded yet.
       max-parallel: 1
       matrix:
-        include:
-          - { scraper: goldensneakers,     tz: cet }
-          - { scraper: buy2bee,            tz: cet }
-          - { scraper: brandsgateway,      tz: eet }
-          - { scraper: brandsdistribution, tz: cet }
-          - { scraper: kajasport,          tz: cet }
-          - { scraper: naleo,              tz: cet }
-    env:
-      SHOULD_RUN: >-
-        ${{
-          (github.event_name == 'workflow_dispatch' &&
-            (github.event.inputs.scraper == 'all' ||
-             github.event.inputs.scraper == matrix.scraper))
-          ||
-          (matrix.tz == 'cet' && contains(fromJSON('["0 7 * * 1-5","0 19 * * 1-5"]'), github.event.schedule))
-          ||
-          (matrix.tz == 'eet' && contains(fromJSON('["0 6 * * 1-5","0 18 * * 1-5"]'), github.event.schedule))
-        }}
+        scraper:
+          - goldensneakers
+          - buy2bee
+          - brandsgateway
+          - brandsdistribution
+          - kajasport
+          - naleo
     steps:
-      - if: env.SHOULD_RUN != 'true'
-        run: echo "Skipping ${{ matrix.scraper }} for this trigger (tz=${{ matrix.tz }})."
+      - name: Gate
+        id: gate
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            if [ "${{ github.event.inputs.scraper }}" = "all" ] || [ "${{ github.event.inputs.scraper }}" = "${{ matrix.scraper }}" ]; then
+              echo "run=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "run=false" >> "$GITHUB_OUTPUT"
+              echo "Manual dispatch selected '${{ github.event.inputs.scraper }}'; skipping ${{ matrix.scraper }}."
+            fi
+            exit 0
+          fi
+          CRON="${{ github.event.schedule }}"
+          # Days since Mon 1970-01-05 (canonical week-0 Monday).
+          DAYS=$(( ($(date -u +%s) / 86400) - 4 ))
+          WEEK=$(( DAYS / 7 ))
+          CYCLE_WEEK=$(( WEEK % 6 ))
+          case "$CYCLE_WEEK" in
+            0) EXPECTED="0 0 * * 1|0 8 * * 3" ;;
+            1) EXPECTED="0 4 * * 1|0 12 * * 3" ;;
+            2) EXPECTED="0 8 * * 1|0 16 * * 3" ;;
+            3) EXPECTED="0 12 * * 1|0 20 * * 3" ;;
+            4) EXPECTED="0 16 * * 1|0 0 * * 4" ;;
+            5) EXPECTED="0 20 * * 1|0 4 * * 4" ;;
+          esac
+          if [[ "|$EXPECTED|" == *"|$CRON|"* ]]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            echo "Cycle week $CYCLE_WEEK active; cron '$CRON' matches — running."
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "Cycle week $CYCLE_WEEK expects '$EXPECTED'; cron '$CRON' does not match — skipping."
+          fi
 
-      - if: env.SHOULD_RUN == 'true'
+      - if: steps.gate.outputs.run == 'true'
         uses: actions/checkout@v4
 
-      - if: env.SHOULD_RUN == 'true'
+      - if: steps.gate.outputs.run == 'true'
         uses: actions/setup-node@v4
         with:
           node-version: 20
 
       - name: Install dependencies
-        if: env.SHOULD_RUN == 'true'
+        if: steps.gate.outputs.run == 'true'
         run: npm install
 
       - name: Install Playwright browsers
-        if: env.SHOULD_RUN == 'true'
+        if: steps.gate.outputs.run == 'true'
         run: npx playwright install --with-deps chromium
 
       - name: Run scraper (${{ matrix.scraper }})
-        if: env.SHOULD_RUN == 'true'
+        if: steps.gate.outputs.run == 'true'
         env:
           NALEO_LOGIN: ${{ secrets.NALEO_LOGIN }}
           NALEO_PASSWORD: ${{ secrets.NALEO_PASSWORD }}

@@ -31,7 +31,6 @@ describe("writeProductBatch", () => {
         brand: "BatchBrand",
         image: "https://img/bp1.jpg",
         href: "https://x/bp1",
-        labels: ["NEW"],
         categoryPath: ["Kobieta", "Sukienki", "Maxi"],
         variants: [
           {
@@ -55,7 +54,6 @@ describe("writeProductBatch", () => {
       .where(eq(schema.products.symbol, "BP1"));
     expect(prod[0].name).toBe("Batch product");
     expect(prod[0].brandId).not.toBeNull();
-    expect(prod[0].labelsJson).toBe('["NEW"]');
 
     const cats = await db
       .select({ n: sql<number>`COUNT(*)::int` })
@@ -82,7 +80,6 @@ describe("writeProductBatch", () => {
       brand: null,
       image: null,
       href: null,
-      labels: [],
       categoryPath: ["A", "B"],
       variants: [
         {
@@ -133,7 +130,6 @@ describe("writeProductBatch", () => {
         brand: null,
         image: null,
         href: null,
-        labels: [],
         categoryPath: [],
         variants: [
           {
@@ -171,7 +167,6 @@ describe("writeProductBatch", () => {
         brand: null,
         image: null,
         href: null,
-        labels: [],
         categoryPath: ["Top", "Mid", "LeafA"],
         variants: [],
       },
@@ -185,7 +180,6 @@ describe("writeProductBatch", () => {
         brand: null,
         image: null,
         href: null,
-        labels: [],
         categoryPath: ["Top", "Mid", "LeafB"],
         variants: [],
       },

@@ -12,7 +12,6 @@ const product: ScrapedProduct = {
   brand: "DemoBrand",
   image: "https://example.com/img.jpg",
   href: "https://example.com/p/demo-1",
-  labels: ["DEMO"],
   categoryPath: ["Kobieta", "Sukienki", "Maxi"],
   variants: [
     {

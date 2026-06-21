@@ -20,7 +20,6 @@ export type RawMultiVariant = {
 
 export type RawProductCard = {
   image: string | null;
-  labels: string[];
   title: string | null;
   brand: string | null;
   symbol: string | null;
@@ -36,10 +35,6 @@ export function parseSearchListCard(productEl: Element): RawProductCard | null {
   const image =
     (productEl.querySelector(".search_top__icon img") as HTMLImageElement)
       ?.src ?? null;
-
-  const labels = [...productEl.querySelectorAll(".label_icons .label")].map(
-    (el) => el.textContent!.trim().toUpperCase(),
-  );
 
   const title =
     productEl.querySelector(".search_top__name_text")?.textContent?.trim() ??
@@ -152,7 +147,7 @@ export function parseSearchListCard(productEl: Element): RawProductCard | null {
       });
     });
 
-    return { image, labels, title, brand, symbol, href, variants };
+    return { image, title, brand, symbol, href, variants };
   }
 
   const variantsMap = new Map<string, RawMultiVariant>();
@@ -258,7 +253,6 @@ export function parseSearchListCard(productEl: Element): RawProductCard | null {
 
   return {
     image,
-    labels,
     title,
     brand,
     symbol,
@@ -305,7 +299,6 @@ export function toScrapedProduct(
     brand: raw.brand,
     image: raw.image,
     href: raw.href ?? null,
-    labels: raw.labels,
     categoryPath: ctx.categoryPath,
     variants,
   };

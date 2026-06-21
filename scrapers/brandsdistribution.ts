@@ -336,7 +336,6 @@ export class BrandsdistributionScraper extends BaseScraper {
           brand: raw.brand,
           image: raw.image,
           href: raw.href,
-          labels: [],
           categoryPath: dedupePath([cat.l1, cat.l2, raw.cardCategory]),
           variants,
         };

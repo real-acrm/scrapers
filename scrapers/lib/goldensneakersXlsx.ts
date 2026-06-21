@@ -1,5 +1,6 @@
 import * as XLSX from "xlsx";
 import type { ScrapedProduct, ScrapedVariant } from "../../pipeline/types.js";
+import { extractGoldensneakersImages } from "./goldensneakersImages.js";
 
 const UNION_SHEET_NAME = "All Assortments";
 const HOME = "https://goldensneakers.net";
@@ -21,6 +22,7 @@ function toInt(v: unknown): number {
 function parseSheet(
   sheet: XLSX.WorkSheet,
   brand: string,
+  imagesByRow: Map<number, string> | undefined,
 ): ScrapedProduct[] {
   const rows = XLSX.utils.sheet_to_json<unknown[]>(sheet, {
     header: 1,
@@ -66,7 +68,7 @@ function parseSheet(
       symbol,
       name: name || symbol,
       brand,
-      image: null,
+      image: imagesByRow?.get(i) ?? null,
       href,
       labels: [],
       categoryPath: [brand],
@@ -80,12 +82,13 @@ export function parseGoldensneakersWorkbook(
   buf: ArrayBuffer | Buffer,
 ): ScrapedProduct[] {
   const wb = XLSX.read(buf, { type: "buffer", cellDates: false });
+  const images = extractGoldensneakersImages(buf);
   const out: ScrapedProduct[] = [];
   for (const name of wb.SheetNames) {
     if (name === UNION_SHEET_NAME) continue;
     const sheet = wb.Sheets[name];
     if (!sheet) continue;
-    out.push(...parseSheet(sheet, name));
+    out.push(...parseSheet(sheet, name, images.get(name)));
   }
   return out;
 }

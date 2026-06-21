@@ -50,13 +50,35 @@ export class KajasportScraper extends BaseScraper {
         waitUntil: "domcontentloaded",
       });
 
-      const navs = await extractSearchListNav(page, "ODZIEŻ");
+      const topCategories = [
+        "ODZIEŻ",
+        "DYSCYPLINY",
+        "BAGAŻ",
+        "WYPOSAŻENIE BOISK",
+        "REKREACJA",
+        "SIŁOWNIA I FITNESS",
+        "TROFEA",
+      ];
+      const navs: Awaited<ReturnType<typeof extractSearchListNav>> = [];
+      for (const label of topCategories) {
+        try {
+          const sub = await extractSearchListNav(page, label);
+          console.log(
+            `[${this.id}] ${sub.length} subcategories under ${label}`,
+          );
+          navs.push(...sub);
+        } catch (err) {
+          console.warn(
+            `[${this.id}] failed to extract nav for ${label}: ${(err as Error).message}`,
+          );
+        }
+      }
       const totalTargets = navs.reduce(
         (n, c) => n + (c.children.length > 0 ? c.children.length : 1),
         0,
       );
       console.log(
-        `[${this.id}] ${navs.length} subcategories under ODZIEŻ, ${totalTargets} leaf targets`,
+        `[${this.id}] ${navs.length} L2 categories total, ${totalTargets} leaf targets`,
       );
 
       let targetIdx = 0;

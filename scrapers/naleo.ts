@@ -56,9 +56,18 @@ export class NaleoScraper extends BaseScraper {
           await page.goto(`${child.href}?portions=300`, {
             waitUntil: "domcontentloaded",
           });
-          await page.waitForSelector(".search_list__product", {
-            timeout: 30000,
-          });
+          const ready = await page
+            .waitForSelector(".search_list__product", { timeout: 30000 })
+            .catch(() => null);
+          if (!ready) {
+            // Empty leaf category (or selector renamed). Skip it instead of
+            // killing the whole run — naleo run #82517834651 lost 1h13m of
+            // progress when a single leaf had no cards.
+            console.warn(
+              `[${this.id}] no products on "${cat.topCategory} > ${cat.category} > ${child.category}"; skipping leaf`,
+            );
+            continue;
+          }
 
           yield* this.paginateAndYield(
             page,

@@ -170,7 +170,18 @@ export abstract class BaseScraper {
         }),
         nextBtn.evaluate((el) => (el as HTMLElement).click()),
       ]);
-      await page.waitForSelector(productCardSelector, { timeout: 30000 });
+      // If the cards never appear on the next page, treat it as end-of-pagination
+      // rather than throwing. The next-link can lag the rendered list, and one
+      // bad page used to kill the whole run (kajasport #82517985599 lost 33min).
+      const ready = await page
+        .waitForSelector(productCardSelector, { timeout: 30000 })
+        .catch(() => null);
+      if (!ready) {
+        console.log(
+          `No cards on page ${pageNum + 1} after "next" — treating as end of pagination.`,
+        );
+        return;
+      }
       pageNum++;
     }
   }

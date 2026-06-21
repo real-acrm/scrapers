@@ -80,7 +80,18 @@ export class BrandsdistributionScraper extends BaseScraper {
       });
 
       console.log(`[${this.id}] login...`);
-      await page.goto(LOGIN_URL, { waitUntil: "domcontentloaded" });
+      try {
+        // Run #82518012881 timed out here at the default 30s. Give the post-login
+        // redirect chain (cookie consent + bot-check + slow first paint) more room,
+        // and dump a screenshot on failure so the next run isn't blind.
+        await page.goto(LOGIN_URL, {
+          waitUntil: "domcontentloaded",
+          timeout: 90_000,
+        });
+      } catch (err) {
+        await this.dumpDebug(page, "login-nav").catch(() => {});
+        throw err;
+      }
       await sleep();
       await this.dismissCookieBanner(page);
       await sleep();
@@ -142,6 +153,34 @@ export class BrandsdistributionScraper extends BaseScraper {
    * After any navigation, check for that text and reload with backoff before
    * doing anything else with the page.
    */
+  /**
+   * Dump a screenshot + first 2KB of HTML into var/debug/ so a failed run on
+   * GHA gives us something to look at. Filenames embed the scraper id, a tag,
+   * and an ISO timestamp so multiple dumps per run don't clobber each other.
+   */
+  private async dumpDebug(page: Page, tag: string): Promise<void> {
+    const dir = resolve(process.cwd(), "var", "debug");
+    await mkdir(dir, { recursive: true });
+    const ts = new Date().toISOString().replace(/[:.]/g, "-");
+    const stem = `${this.id}-${tag}-${ts}`;
+    try {
+      await page.screenshot({
+        path: resolve(dir, `${stem}.png`) as `${string}.png`,
+        fullPage: true,
+      });
+    } catch (err) {
+      console.warn(`[${this.id}] screenshot failed:`, err);
+    }
+    try {
+      const html = await page.content();
+      const { writeFile } = await import("fs/promises");
+      await writeFile(resolve(dir, `${stem}.html`), html.slice(0, 2048));
+    } catch (err) {
+      console.warn(`[${this.id}] content dump failed:`, err);
+    }
+    console.warn(`[${this.id}] dumped debug artifacts to ${dir}/${stem}.*`);
+  }
+
   private async waitOutRateLimit(page: Page): Promise<void> {
     for (let attempt = 0; attempt < RATE_LIMIT_BACKOFFS_SEC.length; attempt++) {
       const limited = await page.evaluate(

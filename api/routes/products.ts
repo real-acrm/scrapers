@@ -190,7 +190,10 @@ products.openapi(detailRoute, async (c) => {
 
   const productRs = await db.execute({
     sql: `SELECT p.id, p.wholesaler_id, p.symbol, p.name, p.image, p.href,
-                 p.category_id, p.labels_json, p.updated_at, b.name AS brand
+                 COALESCE(p.category_id,
+                          (SELECT pc.category_id FROM product_categories pc
+                           WHERE pc.product_id = p.id LIMIT 1)) AS category_id,
+                 p.labels_json, p.updated_at, b.name AS brand
           FROM products p LEFT JOIN brands b ON b.id = p.brand_id
           WHERE p.id = ?`,
     args: [id],

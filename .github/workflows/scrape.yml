@@ -32,14 +32,18 @@ jobs:
     name: scrape (${{ matrix.scraper }})
     strategy:
       fail-fast: false
+      # Scrapers run one at a time against the shared sqld. The order below is
+      # the execution sequence — small/fast ones first, brandsgateway (biggest)
+      # mid-run while the DB is warm but not heavily loaded yet.
+      max-parallel: 1
       matrix:
         include:
-          - { scraper: naleo,              tz: cet }
-          - { scraper: kajasport,          tz: cet }
           - { scraper: goldensneakers,     tz: cet }
-          - { scraper: brandsdistribution, tz: cet }
           - { scraper: buy2bee,            tz: cet }
           - { scraper: brandsgateway,      tz: eet }
+          - { scraper: brandsdistribution, tz: cet }
+          - { scraper: kajasport,          tz: cet }
+          - { scraper: naleo,              tz: cet }
     env:
       SHOULD_RUN: >-
         ${{

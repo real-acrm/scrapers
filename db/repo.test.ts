@@ -6,6 +6,7 @@ import { eq, sql } from "drizzle-orm";
 import { __setDbForTesting, getDb, type Db } from "./client.js";
 import * as schema from "./schema.js";
 import { writeProductBatch } from "./repo.js";
+import type { ScrapedProduct } from "../pipeline/types.js";
 
 async function freshDb() {
   const client = new PGlite();
@@ -73,7 +74,7 @@ describe("writeProductBatch", () => {
   });
 
   it("is idempotent and refreshes mutable fields + appends snapshots", async () => {
-    const p = {
+    const p: ScrapedProduct = {
       wholesalerId: "naleo",
       symbol: "BP2",
       name: "v1",

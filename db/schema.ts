@@ -170,7 +170,7 @@ export const variantSnapshots = pgTable(
     lowestPrice: doublePrecision("lowest_price"),
     regularPrice: doublePrecision("regular_price"),
     srp: doublePrecision("srp"),
-    currency: text("currency"),
+    currency: text("currency", { enum: ["EUR", "PLN"] }).notNull(),
     stock: integer("stock").notNull(),
   },
   (t) => [

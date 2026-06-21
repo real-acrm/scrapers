@@ -55,15 +55,13 @@ export function parseSearchListCard(productEl: Element): RawProductCard | null {
 
   if (!title || !symbol) return null;
 
-  const seen = new Set<string>();
+  const outerId = (productEl as HTMLElement).dataset.id;
   const variantBlocks = [
     ...productEl.querySelectorAll(".search_versions__block"),
   ].filter((b) => {
     const id = (b as HTMLElement).dataset.id;
     if (!id) return true;
-    if (seen.has(id)) return false;
-    seen.add(id);
-    return true;
+    return id === outerId;
   });
   const firstSub = variantBlocks[0]?.querySelector(
     ".search_versions__sub",

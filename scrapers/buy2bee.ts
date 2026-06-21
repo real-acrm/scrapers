@@ -78,6 +78,13 @@ export class Buy2beeScraper extends BaseScraper {
     const browser = await this.launchBrowser();
     try {
       const page = await browser.newPage();
+      // tsx/esbuild wraps top-level named functions with __name() for stack
+      // readability. When we serialize parseBuy2beeCard into the page via
+      // .evaluate(), the wrapper references __name in the browser context
+      // where it doesn't exist. Shim it as identity before any script runs.
+      await page.evaluateOnNewDocument(() => {
+        (globalThis as unknown as { __name: (fn: unknown) => unknown }).__name = (fn) => fn;
+      });
       // Let Chromium's real UA pass through; matching sec-ch-ua is what got us
       // past the brandsdistribution bot-check.
       await page.setExtraHTTPHeaders({

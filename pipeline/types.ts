@@ -4,7 +4,7 @@ export type ScrapedVariant = {
   lowestPrice?: number;
   regularPrice?: number;
   srp?: number;
-  currency?: string;
+  currency: "EUR" | "PLN";
   // Wholesaler-side SKU per variant (e.g. brandsgateway returns these in
   // variation_skus[]). Optional — most scrapers don't surface a per-variant id.
   sku?: string;

@@ -42,6 +42,7 @@ const multiVariantProduct: ScrapedProduct = {
         { optionName: "Rozmiar", value: "S" },
       ],
       price: 99.99,
+      currency: "PLN",
       stock: 3,
     },
     {
@@ -50,6 +51,7 @@ const multiVariantProduct: ScrapedProduct = {
         { optionName: "Rozmiar", value: "M" },
       ],
       price: 99.99,
+      currency: "PLN",
       stock: 0,
     },
   ],
@@ -90,11 +92,13 @@ describe("normalize", () => {
         {
           optionValues: [{ optionName: "Wariant", value: "Czarny S" }],
           price: 49.99,
+          currency: "PLN",
           stock: 5,
         },
         {
           optionValues: [{ optionName: "Wariant", value: "Czarny M" }],
           price: 49.99,
+          currency: "PLN",
           stock: 2,
         },
       ],

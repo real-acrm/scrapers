@@ -20,6 +20,7 @@ const product: ScrapedProduct = {
         { optionName: "Rozmiar", value: "S" },
       ],
       price: 99.99,
+      currency: "PLN",
       stock: 5,
     },
     {
@@ -28,6 +29,7 @@ const product: ScrapedProduct = {
         { optionName: "Rozmiar", value: "M" },
       ],
       price: 99.99,
+      currency: "PLN",
       stock: 2,
     },
   ],

@@ -232,7 +232,7 @@ export async function writeProductBatch(
       lowestPrice: variant.lowestPrice ?? null,
       regularPrice: variant.regularPrice ?? null,
       srp: variant.srp ?? null,
-      currency: variant.currency ?? null,
+      currency: variant.currency,
       stock: variant.stock!,
     }));
 

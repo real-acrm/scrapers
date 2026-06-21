@@ -21,7 +21,7 @@ type RawBuy2beeProduct = {
   name: string | null;
   image: string | null;
   href: string;
-  currency: string;
+  currency: "EUR";
   price: number | null;
   srp: number | null;
   variants: RawBuy2beeVariant[];
@@ -402,8 +402,7 @@ function parseBuy2beeCard(el: Element): RawBuy2beeProduct | null {
   const name = el.querySelector(".product-subtitle")?.textContent?.trim() ?? null;
   const image =
     (el.querySelector("picture img") as HTMLImageElement)?.src ?? null;
-  const currency =
-    el.querySelector(".product-price .currency")?.textContent?.trim() || "€";
+  const currency = "EUR" as const;
   const price = parsePrice(el.querySelector(".product-price .price"));
   const srp = parsePrice(el.querySelector(".retail-price .price"));
 

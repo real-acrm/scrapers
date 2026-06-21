@@ -278,6 +278,7 @@ export function toScrapedProduct(
           lowestPrice: v.lowestPrice,
           regularPrice: v.regularPrice,
           srp: v.srp,
+          currency: "PLN",
           stock: sub.stock,
         });
       }
@@ -288,6 +289,7 @@ export function toScrapedProduct(
         lowestPrice: v.lowestPrice,
         regularPrice: v.regularPrice,
         srp: v.srp,
+        currency: "PLN",
         stock: v.stock,
       });
     }

@@ -47,7 +47,11 @@ function buildFilteredBase(q: ListQuery, forceDeals: boolean) {
     for (const v of q.brand) args.push(v);
   }
   if (q.category && q.category.length > 0) {
-    where.push(`p.category_id IN (${placeholders(q.category.length)})`);
+    where.push(
+      `EXISTS (SELECT 1 FROM product_categories pc
+               WHERE pc.product_id = p.id
+               AND pc.category_id IN (${placeholders(q.category.length)}))`,
+    );
     for (const v of q.category) args.push(v);
   }
   if (q.q) {

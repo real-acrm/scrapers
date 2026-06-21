@@ -63,10 +63,11 @@ facets.openapi(route, async (c) => {
     ORDER BY count DESC, brand ASC`;
 
   const categorySql = `${categoryCte.cte}
-    SELECT f.category_id AS value, c.name AS label, COUNT(*) AS count
-    FROM filtered f LEFT JOIN categories c ON c.id = f.category_id
-    WHERE f.category_id IS NOT NULL
-    GROUP BY f.category_id, c.name
+    SELECT pc.category_id AS value, c.name AS label, COUNT(*) AS count
+    FROM filtered f
+    JOIN product_categories pc ON pc.product_id = f.id
+    LEFT JOIN categories c ON c.id = pc.category_id
+    GROUP BY pc.category_id, c.name
     ORDER BY count DESC, label ASC`;
 
   const inStockSql = `${inStockCte.cte}

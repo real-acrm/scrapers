@@ -49,22 +49,23 @@ export async function upsertCategoryPath(
   const db = getDb();
   let parentId: number | null = null;
   for (const name of path) {
+    const insArgs: [string, number | null, string] = [wholesalerId, parentId, name];
+    const ins = await db.execute({
+      sql: `INSERT INTO categories (wholesaler_id, parent_id, name) VALUES (?, ?, ?)
+            ON CONFLICT DO NOTHING RETURNING id`,
+      args: insArgs,
+    });
+    if (ins.rows[0]) {
+      parentId = Number(ins.rows[0].id);
+      continue;
+    }
     const selArgs: [string, number | null, string] = [wholesalerId, parentId, name];
     const sel = await db.execute({
       sql: `SELECT id FROM categories
             WHERE wholesaler_id = ? AND COALESCE(parent_id, 0) = COALESCE(?, 0) AND name = ?`,
       args: selArgs,
     });
-    if (sel.rows[0]) {
-      parentId = Number(sel.rows[0].id);
-      continue;
-    }
-    const insArgs: [string, number | null, string] = [wholesalerId, parentId, name];
-    const ins = await db.execute({
-      sql: `INSERT INTO categories (wholesaler_id, parent_id, name) VALUES (?, ?, ?) RETURNING id`,
-      args: insArgs,
-    });
-    parentId = Number(ins.rows[0].id);
+    parentId = Number(sel.rows[0].id);
   }
   return parentId!;
 }

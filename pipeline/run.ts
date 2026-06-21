@@ -6,12 +6,13 @@ import {
 import { writeScrapedProduct } from "./normalize.js";
 import type { BaseScraper } from "../scrapers/base.js";
 
-// Each "write" is one libsql batch = one Turso transaction = one HTTP
-// roundtrip (see repo.writeProductBatch). So WRITE_CONCURRENCY=16 means up to
-// 16 concurrent Turso transactions, not ~160 in-flight statements like before
-// the batch refactor — which is what kept blowing Turso's per-DB memory.
-// Upserts are idempotent (ON CONFLICT) so concurrent writes can't collide.
-const WRITE_CONCURRENCY = Number(process.env.WRITE_CONCURRENCY ?? "16");
+// Each "write" is one libsql batch = one short write transaction at sqld.
+// SQLite serializes writers, so high concurrency just queues on the write
+// lock and risks SQLITE_BUSY around WAL checkpoints. Since each batch is one
+// HTTP roundtrip (~30-80ms vs ~2s in the pre-batch days), a small pool is
+// plenty: 4 workers comfortably saturate the single-writer pipeline without
+// fighting the lock. Override via env if a specific scraper needs more.
+const WRITE_CONCURRENCY = Number(process.env.WRITE_CONCURRENCY ?? "4");
 
 export async function runScrapers(scrapers: BaseScraper[]): Promise<void> {
   await migrate();

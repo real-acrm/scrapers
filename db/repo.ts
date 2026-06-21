@@ -503,7 +503,26 @@ export async function writeProductBatch(
     }
   }
 
-  await getDb().batch(stmts, "write");
+  await executeBatchWithBusyRetry(stmts);
+}
+
+// SQLite serializes writers. Around WAL checkpoints or transient lock spikes
+// a batch can come back as SQLITE_BUSY even when overall load is fine; retry
+// with exponential backoff so a single blip doesn't fail the whole scrape.
+async function executeBatchWithBusyRetry(
+  stmts: InStatement[],
+): Promise<void> {
+  const delays = [50, 100, 200, 400, 800];
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await getDb().batch(stmts, "write");
+      return;
+    } catch (err) {
+      const code = (err as { code?: string }).code;
+      if (code !== "SQLITE_BUSY" || attempt >= delays.length) throw err;
+      await new Promise((r) => setTimeout(r, delays[attempt]));
+    }
+  }
 }
 
 export async function insertSnapshot(s: {

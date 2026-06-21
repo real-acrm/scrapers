@@ -4,9 +4,9 @@ import { wholesalers } from "../db/schema.js";
 import { writeScrapedProduct } from "./normalize.js";
 import type { BaseScraper } from "../scrapers/base.js";
 
-// One write = one ACID transaction in Postgres. 4 concurrent workers is plenty
-// for the scraper write path; bump WRITE_CONCURRENCY if a specific scraper needs more.
-const WRITE_CONCURRENCY = Number(process.env.WRITE_CONCURRENCY ?? "4");
+// Postgres has row-level locking — no SQLITE_BUSY equivalent — so high write
+// concurrency is fine. 16 was the original pre-libsql-throttle value.
+const WRITE_CONCURRENCY = Number(process.env.WRITE_CONCURRENCY ?? "16");
 
 export async function runScrapers(scrapers: BaseScraper[]): Promise<void> {
   const db = getDb();

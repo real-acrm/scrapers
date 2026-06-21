@@ -1,4 +1,6 @@
+import type { InStatement, InValue } from "@libsql/client";
 import { getDb } from "./client.js";
+import type { ScrapedProduct } from "../pipeline/types.js";
 
 export async function upsertWholesaler(w: {
   id: string;
@@ -314,6 +316,194 @@ export async function revokeApiKey(id: number): Promise<void> {
     sql: `UPDATE api_keys SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL`,
     args: [new Date().toISOString(), id],
   });
+}
+
+/**
+ * Single-batch writer for the entire product graph (brand, categories,
+ * product, options, variants, snapshots) using one libsql `db.batch`.
+ *
+ * All cross-statement IDs are resolved via subqueries on natural keys
+ * (wholesaler_id+symbol, wholesaler_id+path, product_id+name, etc.) so the
+ * whole graph commits in one HTTP roundtrip / one Turso transaction.
+ *
+ * Replaces the per-helper write path (upsertBrand → upsertCategoryPath →
+ * upsertProduct → linkProductCategory → upsertOptionAndValues →
+ * upsertVariant → insertSnapshot), which was ~10+ sequential roundtrips
+ * per product and OOM'd Turso under matrix concurrency.
+ */
+export async function writeProductBatch(
+  p: ScrapedProduct,
+  scrapedAt: string,
+): Promise<void> {
+  const stmts: InStatement[] = [];
+  const w = p.wholesalerId;
+  const sym = p.symbol;
+
+  // Subquery resolving the products row id by natural key.
+  const productSubSql = `(SELECT id FROM products WHERE wholesaler_id = ? AND symbol = ?)`;
+  const productSubArgs: InValue[] = [w, sym];
+
+  // Subquery resolving the category id at depth k (1-indexed) of p.categoryPath.
+  // For k=0 returns the SQL literal "NULL" with no args.
+  const categoryIdAt = (k: number): { sql: string; args: InValue[] } => {
+    if (k === 0) return { sql: "NULL", args: [] };
+    if (k === 1) {
+      return {
+        sql: `(SELECT id FROM categories WHERE wholesaler_id = ? AND COALESCE(parent_id, 0) = 0 AND name = ?)`,
+        args: [w, p.categoryPath[0]],
+      };
+    }
+    const inner = categoryIdAt(k - 1);
+    return {
+      sql: `(SELECT id FROM categories WHERE wholesaler_id = ? AND COALESCE(parent_id, 0) = COALESCE(${inner.sql}, 0) AND name = ?)`,
+      args: [w, ...inner.args, p.categoryPath[k - 1]],
+    };
+  };
+
+  if (p.brand) {
+    stmts.push({
+      sql: `INSERT INTO brands (wholesaler_id, name) VALUES (?, ?)
+            ON CONFLICT(wholesaler_id, name) DO NOTHING`,
+      args: [w, p.brand],
+    });
+  }
+
+  for (let i = 0; i < p.categoryPath.length; i++) {
+    const parent = categoryIdAt(i);
+    stmts.push({
+      sql: `INSERT INTO categories (wholesaler_id, parent_id, name)
+            VALUES (?, ${parent.sql}, ?)
+            ON CONFLICT DO NOTHING`,
+      args: [w, ...parent.args, p.categoryPath[i]],
+    });
+  }
+
+  const brandSub = p.brand
+    ? {
+        sql: `(SELECT id FROM brands WHERE wholesaler_id = ? AND name = ?)`,
+        args: [w, p.brand] as InValue[],
+      }
+    : { sql: `NULL`, args: [] as InValue[] };
+
+  stmts.push({
+    sql: `INSERT INTO products
+            (wholesaler_id, symbol, name, brand_id, category_id, image, href, labels_json, updated_at)
+          VALUES (?, ?, ?, ${brandSub.sql}, NULL, ?, ?, ?, ?)
+          ON CONFLICT(wholesaler_id, symbol) DO UPDATE SET
+            name        = excluded.name,
+            brand_id    = excluded.brand_id,
+            category_id = excluded.category_id,
+            image       = excluded.image,
+            href        = excluded.href,
+            labels_json = excluded.labels_json,
+            updated_at  = excluded.updated_at`,
+    args: [
+      w,
+      sym,
+      p.name,
+      ...brandSub.args,
+      p.image,
+      p.href,
+      JSON.stringify(p.labels),
+      scrapedAt,
+    ],
+  });
+
+  if (p.categoryPath.length > 0) {
+    const leaf = categoryIdAt(p.categoryPath.length);
+    stmts.push({
+      sql: `INSERT OR IGNORE INTO product_categories (product_id, category_id)
+            VALUES (${productSubSql}, ${leaf.sql})`,
+      args: [...productSubArgs, ...leaf.args],
+    });
+  }
+
+  // Distinct (optionName -> set of values) across all variants.
+  const optionToValues = new Map<string, Set<string>>();
+  for (const v of p.variants) {
+    for (const ov of v.optionValues) {
+      if (!optionToValues.has(ov.optionName))
+        optionToValues.set(ov.optionName, new Set());
+      optionToValues.get(ov.optionName)!.add(ov.value);
+    }
+  }
+
+  for (const [optName, values] of optionToValues) {
+    stmts.push({
+      sql: `INSERT INTO product_options (product_id, name)
+            VALUES (${productSubSql}, ?)
+            ON CONFLICT(product_id, name) DO NOTHING`,
+      args: [...productSubArgs, optName],
+    });
+    for (const valName of values) {
+      stmts.push({
+        sql: `INSERT INTO product_option_values (option_id, name)
+              VALUES (
+                (SELECT id FROM product_options WHERE product_id = ${productSubSql} AND name = ?),
+                ?
+              )
+              ON CONFLICT(option_id, name) DO NOTHING`,
+        args: [...productSubArgs, optName, valName],
+      });
+    }
+  }
+
+  for (const v of p.variants) {
+    const pairs = v.optionValues
+      .map((ov) => ({ optionName: ov.optionName, valueName: ov.value }))
+      .sort((a, b) => a.optionName.localeCompare(b.optionName));
+    const vkey = pairs.map((pp) => `${pp.optionName}:${pp.valueName}`).join("|");
+
+    stmts.push({
+      sql: `INSERT INTO variants (product_id, variant_key, sku)
+            VALUES (${productSubSql}, ?, ?)
+            ON CONFLICT(product_id, variant_key) DO UPDATE SET
+              sku = COALESCE(excluded.sku, variants.sku)`,
+      args: [...productSubArgs, vkey, v.sku ?? null],
+    });
+
+    const variantSubSql = `(SELECT id FROM variants WHERE product_id = ${productSubSql} AND variant_key = ?)`;
+    const variantSubArgs: InValue[] = [...productSubArgs, vkey];
+
+    for (const ov of v.optionValues) {
+      stmts.push({
+        sql: `INSERT OR IGNORE INTO variant_option_values (variant_id, option_value_id)
+              VALUES (
+                ${variantSubSql},
+                (SELECT id FROM product_option_values
+                   WHERE option_id = (SELECT id FROM product_options WHERE product_id = ${productSubSql} AND name = ?)
+                     AND name = ?)
+              )`,
+        args: [
+          ...variantSubArgs,
+          ...productSubArgs,
+          ov.optionName,
+          ov.value,
+        ],
+      });
+    }
+
+    if (v.stock !== null) {
+      stmts.push({
+        sql: `INSERT INTO variant_snapshots
+                (variant_id, wholesaler_id, scraped_at, price, lowest_price, regular_price, srp, currency, stock)
+              VALUES (${variantSubSql}, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        args: [
+          ...variantSubArgs,
+          w,
+          scrapedAt,
+          v.price,
+          v.lowestPrice ?? null,
+          v.regularPrice ?? null,
+          v.srp ?? null,
+          v.currency ?? null,
+          v.stock,
+        ],
+      });
+    }
+  }
+
+  await getDb().batch(stmts, "write");
 }
 
 export async function insertSnapshot(s: {

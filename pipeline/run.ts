@@ -6,11 +6,11 @@ import {
 import { writeScrapedProduct } from "./normalize.js";
 import type { BaseScraper } from "../scrapers/base.js";
 
-// brandsgateway's Meilisearch pull returns ~55k hits in ~1s but each Turso
-// roundtrip serializes ~200ms, so a sequential writer pins throughput at ~2/sec
-// and the GHA 6h cap kills the job at ~52k. Overlapping the writes via a small
-// pool turns the same job into a ~5min run. Safe for the other scrapers too —
-// the upserts are idempotent (ON CONFLICT) so concurrent writes can't collide.
+// Each "write" is one libsql batch = one Turso transaction = one HTTP
+// roundtrip (see repo.writeProductBatch). So WRITE_CONCURRENCY=16 means up to
+// 16 concurrent Turso transactions, not ~160 in-flight statements like before
+// the batch refactor — which is what kept blowing Turso's per-DB memory.
+// Upserts are idempotent (ON CONFLICT) so concurrent writes can't collide.
 const WRITE_CONCURRENCY = Number(process.env.WRITE_CONCURRENCY ?? "16");
 
 export async function runScrapers(scrapers: BaseScraper[]): Promise<void> {

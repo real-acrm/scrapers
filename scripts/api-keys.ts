@@ -1,8 +1,11 @@
 import "dotenv/config";
 import { randomBytes } from "crypto";
-import { createApiKey, listApiKeys, revokeApiKey } from "../db/repo.js";
+import { and, asc, eq, isNull } from "drizzle-orm";
+import { getDb } from "../db/client.js";
+import { apiKeys } from "../db/schema.js";
 
 async function main(): Promise<void> {
+  const db = getDb();
   const sub = process.argv[2];
   const arg = process.argv[3];
 
@@ -12,18 +15,21 @@ async function main(): Promise<void> {
       process.exit(1);
     }
     const key = "pk_" + randomBytes(16).toString("hex");
-    const id = await createApiKey({ key, label: arg });
-    console.log(`id=${id} key=${key}`);
+    const [row] = await db
+      .insert(apiKeys)
+      .values({ key, label: arg, createdAt: new Date().toISOString() })
+      .returning({ id: apiKeys.id });
+    console.log(`id=${row.id} key=${key}`);
     return;
   }
 
   if (sub === "list") {
-    const rows = await listApiKeys();
+    const rows = await db.select().from(apiKeys).orderBy(asc(apiKeys.id));
     for (const r of rows) {
       const masked = `${r.key.slice(0, 8)}…${r.key.slice(-4)}`;
-      const status = r.revoked_at ? `revoked@${r.revoked_at}` : "active";
+      const status = r.revokedAt ? `revoked@${r.revokedAt}` : "active";
       console.log(
-        `${r.id}\t${r.label}\t${masked}\tcreated=${r.created_at}\tlast_used=${r.last_used_at ?? "-"}\t${status}`,
+        `${r.id}\t${r.label}\t${masked}\tcreated=${r.createdAt}\tlast_used=${r.lastUsedAt ?? "-"}\t${status}`,
       );
     }
     return;
@@ -35,7 +41,10 @@ async function main(): Promise<void> {
       console.error("usage: keys:revoke -- <id>");
       process.exit(1);
     }
-    await revokeApiKey(id);
+    await db
+      .update(apiKeys)
+      .set({ revokedAt: new Date().toISOString() })
+      .where(and(eq(apiKeys.id, id), isNull(apiKeys.revokedAt)));
     console.log(`revoked id=${id}`);
     return;
   }

@@ -92,6 +92,5 @@ jobs:
           BRANDSGATEWAY_MEILI_HOST: ${{ secrets.BRANDSGATEWAY_MEILI_HOST }}
           BRANDSGATEWAY_MEILI_TOKEN: ${{ secrets.BRANDSGATEWAY_MEILI_TOKEN }}
           BRANDSGATEWAY_MODE: full
-          TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
-          TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: xvfb-run --auto-servernum --server-args='-screen 0 1280x800x24' npm run scrape -- ${{ matrix.scraper }}

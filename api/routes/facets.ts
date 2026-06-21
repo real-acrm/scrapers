@@ -1,4 +1,5 @@
 import { OpenAPIHono, createRoute } from "@hono/zod-openapi";
+import { sql } from "drizzle-orm";
 import { getDb } from "../../db/client.js";
 import {
   FacetsSchema,
@@ -23,9 +24,9 @@ const route = createRoute({
 });
 
 // True faceting: when counting a given facet, that facet's own filter is
-// excluded from the context. "Nike (42)" means "with the rest of the filters
-// applied but brand cleared, 42 products are Nike". Each facet runs its own
-// query with the relevant field stripped from the ProductsQuery.
+// excluded from the context. "Nike (42)" means: with the rest of the filters
+// applied but brand cleared, 42 products are Nike. Each facet runs its own
+// query with the relevant field stripped.
 facets.openapi(route, async (c) => {
   const q = c.req.valid("query");
   const db = getDb();
@@ -35,100 +36,90 @@ facets.openapi(route, async (c) => {
     ...overrides,
   });
 
-  const wholesalerQ = without({ wholesaler: undefined });
-  const brandQ = without({ brand: undefined });
-  const categoryQ = without({ category: undefined });
-  const inStockQ = without({ in_stock: undefined });
-  const onPromoQ = without({ on_promo: undefined });
-  const priceQ = without({ min_price: undefined, max_price: undefined });
-
-  const wholesalerCte = buildFilteredBase(wholesalerQ, false);
-  const brandCte = buildFilteredBase(brandQ, false);
-  const categoryCte = buildFilteredBase(categoryQ, false);
-  const inStockCte = buildFilteredBase(inStockQ, false);
-  const onPromoCte = buildFilteredBase(onPromoQ, false);
-  const priceCte = buildFilteredBase(priceQ, false);
-
-  const wholesalerSql = `${wholesalerCte.cte}
-    SELECT f.wholesaler_id AS id, w.name AS name, COUNT(*) AS count
-    FROM filtered f LEFT JOIN wholesalers w ON w.id = f.wholesaler_id
-    GROUP BY f.wholesaler_id, w.name
-    ORDER BY count DESC, name ASC`;
-
-  const brandSql = `${brandCte.cte}
-    SELECT brand AS value, brand AS label, COUNT(*) AS count
-    FROM filtered
-    WHERE brand IS NOT NULL
-    GROUP BY brand
-    ORDER BY count DESC, brand ASC`;
-
-  const categorySql = `${categoryCte.cte}
-    SELECT pc.category_id AS value, c.name AS label, COUNT(*) AS count
-    FROM filtered f
-    JOIN product_categories pc ON pc.product_id = f.id
-    LEFT JOIN categories c ON c.id = pc.category_id
-    GROUP BY pc.category_id, c.name
-    ORDER BY count DESC, label ASC`;
-
-  const inStockSql = `${inStockCte.cte}
-    SELECT
-      SUM(CASE WHEN any_in_stock = 1 THEN 1 ELSE 0 END) AS true_count,
-      SUM(CASE WHEN any_in_stock = 0 THEN 1 ELSE 0 END) AS false_count
-    FROM filtered`;
-
-  const onPromoSql = `${onPromoCte.cte}
-    SELECT
-      SUM(CASE WHEN max_discount > 0 THEN 1 ELSE 0 END) AS true_count,
-      SUM(CASE WHEN max_discount IS NULL OR max_discount = 0 THEN 1 ELSE 0 END) AS false_count
-    FROM filtered`;
-
-  const priceSql = `${priceCte.cte}
-    SELECT MIN(min_price) AS price_min, MAX(min_price) AS price_max
-    FROM filtered`;
+  const ws = buildFilteredBase(without({ wholesaler: undefined }), false);
+  const bs = buildFilteredBase(without({ brand: undefined }), false);
+  const cs = buildFilteredBase(without({ category: undefined }), false);
+  const ins = buildFilteredBase(without({ in_stock: undefined }), false);
+  const ps = buildFilteredBase(without({ on_promo: undefined }), false);
+  const prs = buildFilteredBase(
+    without({ min_price: undefined, max_price: undefined }),
+    false,
+  );
 
   const [wRs, bRs, cRs, sRs, pRs, prRs] = await Promise.all([
-    db.execute({ sql: wholesalerSql, args: wholesalerCte.args }),
-    db.execute({ sql: brandSql, args: brandCte.args }),
-    db.execute({ sql: categorySql, args: categoryCte.args }),
-    db.execute({ sql: inStockSql, args: inStockCte.args }),
-    db.execute({ sql: onPromoSql, args: onPromoCte.args }),
-    db.execute({ sql: priceSql, args: priceCte.args }),
+    db.execute<{ id: string; name: string | null; count: number }>(sql`
+      ${ws.cte}
+      SELECT f.wholesaler_id AS id, w.name AS name, COUNT(*)::int AS count
+      FROM filtered f LEFT JOIN wholesalers w ON w.id = f.wholesaler_id
+      GROUP BY f.wholesaler_id, w.name
+      ORDER BY count DESC, name ASC
+    `),
+    db.execute<{ value: string; label: string; count: number }>(sql`
+      ${bs.cte}
+      SELECT brand AS value, brand AS label, COUNT(*)::int AS count
+      FROM filtered
+      WHERE brand IS NOT NULL
+      GROUP BY brand
+      ORDER BY count DESC, brand ASC
+    `),
+    db.execute<{ value: number; label: string | null; count: number }>(sql`
+      ${cs.cte}
+      SELECT pc.category_id AS value, c.name AS label, COUNT(*)::int AS count
+      FROM filtered f
+      JOIN product_categories pc ON pc.product_id = f.id
+      LEFT JOIN categories c ON c.id = pc.category_id
+      GROUP BY pc.category_id, c.name
+      ORDER BY count DESC, label ASC
+    `),
+    db.execute<{ true_count: number | null; false_count: number | null }>(sql`
+      ${ins.cte}
+      SELECT
+        SUM(CASE WHEN any_in_stock = 1 THEN 1 ELSE 0 END)::int AS true_count,
+        SUM(CASE WHEN any_in_stock = 0 THEN 1 ELSE 0 END)::int AS false_count
+      FROM filtered
+    `),
+    db.execute<{ true_count: number | null; false_count: number | null }>(sql`
+      ${ps.cte}
+      SELECT
+        SUM(CASE WHEN max_discount > 0 THEN 1 ELSE 0 END)::int AS true_count,
+        SUM(CASE WHEN max_discount IS NULL OR max_discount = 0 THEN 1 ELSE 0 END)::int AS false_count
+      FROM filtered
+    `),
+    db.execute<{ price_min: number | null; price_max: number | null }>(sql`
+      ${prs.cte}
+      SELECT MIN(min_price)::float AS price_min, MAX(min_price)::float AS price_max
+      FROM filtered
+    `),
   ]);
 
-  const wholesaler = wRs.rows.map((r) => ({
-    id: String(r.id),
-    name: r.name == null ? String(r.id) : String(r.name),
-    count: Number(r.count),
-  }));
-  const brand = bRs.rows.map((r) => ({
-    value: String(r.value),
-    label: String(r.label),
-    count: Number(r.count),
-  }));
-  const category = cRs.rows.map((r) => ({
-    value: String(r.value),
-    label: r.label == null ? String(r.value) : String(r.label),
-    count: Number(r.count),
-  }));
-  const s = sRs.rows[0] ?? {};
-  const p = pRs.rows[0] ?? {};
-  const pr = prRs.rows[0] ?? {};
   return c.json(
     {
-      wholesaler,
-      brand,
-      category,
+      wholesaler: wRs.rows.map((r) => ({
+        id: r.id,
+        name: r.name ?? r.id,
+        count: r.count,
+      })),
+      brand: bRs.rows.map((r) => ({
+        value: r.value,
+        label: r.label,
+        count: r.count,
+      })),
+      category: cRs.rows.map((r) => ({
+        value: String(r.value),
+        label: r.label ?? String(r.value),
+        count: r.count,
+      })),
       in_stock: {
-        true: Number(s.true_count ?? 0),
-        false: Number(s.false_count ?? 0),
+        true: sRs.rows[0]?.true_count ?? 0,
+        false: sRs.rows[0]?.false_count ?? 0,
       },
       on_promo: {
-        true: Number(p.true_count ?? 0),
-        false: Number(p.false_count ?? 0),
+        true: pRs.rows[0]?.true_count ?? 0,
+        false: pRs.rows[0]?.false_count ?? 0,
       },
       price: {
-        min: pr.price_min == null ? 0 : Number(pr.price_min),
-        max: pr.price_max == null ? 0 : Number(pr.price_max),
+        min: prRs.rows[0]?.price_min ?? 0,
+        max: prRs.rows[0]?.price_max ?? 0,
       },
     },
     200,

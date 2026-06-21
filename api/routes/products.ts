@@ -1,5 +1,5 @@
 import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
-import type { InValue } from "@libsql/client";
+import { desc, eq, sql, type SQL } from "drizzle-orm";
 import { getDb } from "../../db/client.js";
 import {
   PaginatedSchema,
@@ -29,57 +29,74 @@ const listRoute = createRoute({
 
 type ListQuery = z.infer<typeof ProductsQuerySchema>;
 
-const placeholders = (n: number) =>
-  Array.from({ length: n }, () => "?").join(", ");
+type FilteredRow = {
+  id: number;
+  wholesaler_id: string;
+  symbol: string;
+  name: string;
+  image: string | null;
+  href: string | null;
+  updated_at: string;
+  category_id: number | null;
+  brand: string | null;
+  min_price: number | null;
+  currency: string | null;
+  any_in_stock: number;
+  max_discount: number | null;
+};
 
-// Builds the CTE chain producing a `filtered` row per product (after both
-// product-level WHERE and aggregate-level HAVING). Reused by `/products`
-// listing and `/facets` aggregation.
-function buildFilteredBase(q: ListQuery, forceDeals: boolean) {
-  const where: string[] = [];
-  const args: InValue[] = [];
-  if (q.wholesaler) {
-    where.push("p.wholesaler_id = ?");
-    args.push(q.wholesaler);
-  }
+/**
+ * Builds the CTE chain producing `filtered` rows (per product) after product-
+ * level WHEREs and aggregate-level HAVINGs. Reused by /products list and /facets.
+ */
+export function buildFilteredBase(
+  q: ListQuery,
+  forceDeals: boolean,
+): { cte: SQL } {
+  const composedWhere: SQL[] = [];
+  if (q.wholesaler) composedWhere.push(sql`p.wholesaler_id = ${q.wholesaler}`);
   if (q.brand && q.brand.length > 0) {
-    where.push(`b.name IN (${placeholders(q.brand.length)})`);
-    for (const v of q.brand) args.push(v);
+    composedWhere.push(
+      sql`b.name IN (${sql.join(
+        q.brand.map((v) => sql`${v}`),
+        sql`, `,
+      )})`,
+    );
   }
   if (q.category && q.category.length > 0) {
-    where.push(
-      `EXISTS (SELECT 1 FROM product_categories pc
-               WHERE pc.product_id = p.id
-               AND pc.category_id IN (${placeholders(q.category.length)}))`,
+    composedWhere.push(
+      sql`EXISTS (SELECT 1 FROM product_categories pc WHERE pc.product_id = p.id AND pc.category_id IN (${sql.join(
+        q.category.map((v) => sql`${v}`),
+        sql`, `,
+      )}))`,
     );
-    for (const v of q.category) args.push(v);
   }
-  if (q.q) {
-    where.push("p.name LIKE ?");
-    args.push(`%${q.q}%`);
-  }
+  if (q.q) composedWhere.push(sql`p.name ILIKE ${"%" + q.q + "%"}`);
 
-  const having: string[] = [];
-  if (q.in_stock === true) having.push("any_in_stock = 1");
-  if (q.in_stock === false) having.push("any_in_stock = 0");
-  if (q.on_promo === true) having.push("max_discount > 0");
+  const having: SQL[] = [];
+  if (q.in_stock === true) having.push(sql`any_in_stock = 1`);
+  if (q.in_stock === false) having.push(sql`any_in_stock = 0`);
+  if (q.on_promo === true) having.push(sql`max_discount > 0`);
   if (q.on_promo === false)
-    having.push("(max_discount IS NULL OR max_discount = 0)");
-  if (q.min_price !== undefined) {
-    having.push("min_price >= ?");
-    args.push(q.min_price);
-  }
-  if (q.max_price !== undefined) {
-    having.push("min_price <= ?");
-    args.push(q.max_price);
-  }
-  if (forceDeals) having.push("max_discount > 0");
+    having.push(sql`(max_discount IS NULL OR max_discount = 0)`);
+  if (q.min_price !== undefined)
+    having.push(sql`min_price >= ${q.min_price}`);
+  if (q.max_price !== undefined)
+    having.push(sql`min_price <= ${q.max_price}`);
+  if (forceDeals) having.push(sql`max_discount > 0`);
 
-  const cte = `
+  const whereSql =
+    composedWhere.length > 0
+      ? sql` WHERE ${sql.join(composedWhere, sql` AND `)}`
+      : sql``;
+  const havingSql =
+    having.length > 0 ? sql` WHERE ${sql.join(having, sql` AND `)}` : sql``;
+
+  const cte = sql`
     WITH latest AS (
       SELECT vs.variant_id, vs.price, vs.regular_price, vs.currency, vs.stock,
              CASE WHEN vs.regular_price IS NOT NULL AND vs.price IS NOT NULL AND vs.regular_price > vs.price
-                  THEN ROUND((vs.regular_price - vs.price) * 100.0 / vs.regular_price, 1)
+                  THEN ROUND(((vs.regular_price - vs.price) * 100.0 / vs.regular_price)::numeric, 1)
                   ELSE NULL END AS discount_percent,
              ROW_NUMBER() OVER (PARTITION BY vs.variant_id ORDER BY vs.scraped_at DESC) AS rn
       FROM variant_snapshots vs
@@ -99,60 +116,54 @@ function buildFilteredBase(q: ListQuery, forceDeals: boolean) {
              p.updated_at AS updated_at,
              p.category_id,
              b.name AS brand,
-             COALESCE(a.min_price, NULL) AS min_price,
-             COALESCE(a.currency, NULL) AS currency,
+             a.min_price AS min_price,
+             a.currency AS currency,
              COALESCE(a.any_in_stock, 0) AS any_in_stock,
              a.max_discount
       FROM products p
       LEFT JOIN brands b ON b.id = p.brand_id
       LEFT JOIN agg a ON a.product_id = p.id
-      ${where.length ? "WHERE " + where.join(" AND ") : ""}
+      ${whereSql}
     ),
     filtered AS (
-      SELECT * FROM base
-      ${having.length ? "WHERE " + having.join(" AND ") : ""}
+      SELECT * FROM base${havingSql}
     )`;
 
-  return { cte, args };
+  return { cte };
 }
-
-function buildList(q: ListQuery, forceDeals: boolean) {
-  const { cte, args } = buildFilteredBase(q, forceDeals);
-
-  const sort = forceDeals ? "discount_desc" : q.sort;
-  const orderBy = {
-    newest: "updated_at DESC",
-    price_asc: "min_price ASC NULLS LAST",
-    price_desc: "min_price DESC NULLS LAST",
-    discount_desc: "max_discount DESC NULLS LAST",
-  }[sort];
-
-  const sql = `${cte}
-    SELECT *, COUNT(*) OVER () AS total_count FROM filtered
-    ORDER BY ${orderBy}
-    LIMIT ? OFFSET ?`;
-
-  args.push(q.pageSize, (q.page - 1) * q.pageSize);
-  return { sql, args };
-}
-
-export { buildFilteredBase };
 
 products.openapi(listRoute, async (c) => {
   const q = c.req.valid("query");
-  const { sql, args } = buildList(q, false);
-  const rs = await getDb().execute({ sql, args });
-  const total = rs.rows[0] ? Number(rs.rows[0].total_count) : 0;
-  const items = rs.rows.map((r) => ({
+  const { cte } = buildFilteredBase(q, false);
+
+  const orderBy = {
+    newest: sql`updated_at DESC`,
+    price_asc: sql`min_price ASC NULLS LAST`,
+    price_desc: sql`min_price DESC NULLS LAST`,
+    discount_desc: sql`max_discount DESC NULLS LAST`,
+  }[q.sort];
+
+  const offset = (q.page - 1) * q.pageSize;
+  const stmt = sql`${cte}
+    SELECT *, COUNT(*) OVER () AS total_count FROM filtered
+    ORDER BY ${orderBy}
+    LIMIT ${q.pageSize} OFFSET ${offset}`;
+
+  const result = await getDb().execute<FilteredRow & { total_count: number }>(
+    stmt,
+  );
+  const rows = result.rows;
+  const total = rows[0] ? Number(rows[0].total_count) : 0;
+  const items = rows.map((r) => ({
     id: Number(r.id),
-    wholesaler_id: String(r.wholesaler_id),
-    symbol: String(r.symbol),
-    name: String(r.name),
-    brand: r.brand == null ? null : String(r.brand),
-    image: r.image == null ? null : String(r.image),
-    href: r.href == null ? null : String(r.href),
+    wholesaler_id: r.wholesaler_id,
+    symbol: r.symbol,
+    name: r.name,
+    brand: r.brand,
+    image: r.image,
+    href: r.href,
     min_price: r.min_price == null ? null : Number(r.min_price),
-    currency: r.currency == null ? null : String(r.currency),
+    currency: r.currency,
     in_stock: Number(r.any_in_stock) === 1,
     discount_percent: r.max_discount == null ? null : Number(r.max_discount),
   }));
@@ -167,8 +178,6 @@ products.openapi(listRoute, async (c) => {
     200,
   );
 });
-
-export { buildList };
 
 const detailRoute = createRoute({
   method: "get",
@@ -188,88 +197,93 @@ products.openapi(detailRoute, async (c) => {
   const { id } = c.req.valid("param");
   const db = getDb();
 
-  const productRs = await db.execute({
-    sql: `SELECT p.id, p.wholesaler_id, p.symbol, p.name, p.image, p.href,
-                 COALESCE(p.category_id,
-                          (SELECT pc.category_id FROM product_categories pc
-                           WHERE pc.product_id = p.id LIMIT 1)) AS category_id,
-                 p.labels_json, p.updated_at, b.name AS brand
-          FROM products p LEFT JOIN brands b ON b.id = p.brand_id
-          WHERE p.id = ?`,
-    args: [id],
+  const product = await db.query.products.findFirst({
+    where: (p, { eq }) => eq(p.id, id),
+    with: {
+      brand: { columns: { name: true } },
+      productCategories: {
+        columns: { categoryId: true },
+        limit: 1,
+      },
+      variants: {
+        with: {
+          snapshots: {
+            orderBy: (s, { desc }) => desc(s.scrapedAt),
+            limit: 1,
+          },
+          optionValues: {
+            with: {
+              optionValue: {
+                with: { option: { columns: { name: true } } },
+              },
+            },
+          },
+        },
+      },
+    },
   });
-  const p = productRs.rows[0];
-  if (!p) return c.json({ error: "not found" }, 404);
+  if (!product) return c.json({ error: "not found" }, 404);
 
-  const variantRs = await db.execute({
-    sql: `
-      SELECT v.id AS variant_id, v.variant_key, v.sku,
-             (SELECT json_group_array(json_object('option', po.name, 'value', pov.name))
-                FROM variant_option_values vov
-                JOIN product_option_values pov ON pov.id = vov.option_value_id
-                JOIN product_options po ON po.id = pov.option_id
-                WHERE vov.variant_id = v.id) AS option_values,
-             (SELECT json_object('scraped_at', vs.scraped_at, 'price', vs.price,
-                                 'lowest_price', vs.lowest_price, 'regular_price', vs.regular_price, 'stock', vs.stock)
-                FROM variant_snapshots vs
-                WHERE vs.variant_id = v.id
-                ORDER BY vs.scraped_at DESC LIMIT 1) AS latest_snapshot
-      FROM variants v WHERE v.product_id = ?`,
-    args: [id],
-  });
-
-  const variants = variantRs.rows.map((r) => ({
-    variant_id: Number(r.variant_id),
-    variant_key: String(r.variant_key),
-    sku: r.sku == null ? null : String(r.sku),
-    option_values: r.option_values ? JSON.parse(String(r.option_values)) : [],
-    latest_snapshot: r.latest_snapshot
-      ? JSON.parse(String(r.latest_snapshot))
-      : null,
+  const variantOut = product.variants.map((v) => ({
+    variant_id: v.id,
+    variant_key: v.variantKey,
+    sku: v.sku,
+    option_values: v.optionValues.map((vov) => ({
+      option: vov.optionValue.option.name,
+      value: vov.optionValue.name,
+    })),
+    latest_snapshot:
+      v.snapshots[0] == null
+        ? null
+        : {
+            scraped_at: v.snapshots[0].scrapedAt,
+            price: v.snapshots[0].price,
+            lowest_price: v.snapshots[0].lowestPrice,
+            regular_price: v.snapshots[0].regularPrice,
+            stock: v.snapshots[0].stock,
+          },
   }));
 
-  // Aggregate min_price/discount/in_stock from variant snapshots for parity with list view.
   let min_price: number | null = null;
-  let currency: string | null = null;
   let in_stock = false;
   let max_discount: number | null = null;
-  for (const v of variants) {
-    const s = v.latest_snapshot as
-      | {
-          price: number | null;
-          regular_price: number | null;
-          stock: number;
-        }
-      | null;
+  for (const v of variantOut) {
+    const s = v.latest_snapshot;
     if (!s) continue;
     if (s.stock > 0) in_stock = true;
     if (s.price != null && (min_price == null || s.price < min_price))
       min_price = s.price;
-    if (s.regular_price != null && s.price != null && s.regular_price > s.price) {
+    if (
+      s.regular_price != null &&
+      s.price != null &&
+      s.regular_price > s.price
+    ) {
       const d =
-        Math.round(((s.regular_price - s.price) * 100.0) / s.regular_price * 10) /
-        10;
+        Math.round(
+          (((s.regular_price - s.price) * 100.0) / s.regular_price) * 10,
+        ) / 10;
       if (max_discount == null || d > max_discount) max_discount = d;
     }
   }
 
   return c.json(
     {
-      id: Number(p.id),
-      wholesaler_id: String(p.wholesaler_id),
-      symbol: String(p.symbol),
-      name: String(p.name),
-      brand: p.brand == null ? null : String(p.brand),
-      image: p.image == null ? null : String(p.image),
-      href: p.href == null ? null : String(p.href),
-      category_id: p.category_id == null ? null : Number(p.category_id),
-      labels: p.labels_json ? JSON.parse(String(p.labels_json)) : [],
-      updated_at: String(p.updated_at),
+      id: product.id,
+      wholesaler_id: product.wholesalerId,
+      symbol: product.symbol,
+      name: product.name,
+      brand: product.brand?.name ?? null,
+      image: product.image,
+      href: product.href,
+      category_id:
+        product.categoryId ?? product.productCategories[0]?.categoryId ?? null,
+      labels: product.labelsJson ? JSON.parse(product.labelsJson) : [],
+      updated_at: product.updatedAt,
       min_price,
-      currency,
+      currency: null,
       in_stock,
       discount_percent: max_discount,
-      variants,
+      variants: variantOut,
     },
     200,
   );

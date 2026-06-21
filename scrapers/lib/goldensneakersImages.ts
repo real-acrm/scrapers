@@ -13,7 +13,8 @@ import XLSX from "xlsx";
 export function extractGoldensneakersImages(
   buf: ArrayBuffer | Buffer,
 ): Map<string, Map<number, string>> {
-  const cfb = XLSX.CFB.read(buf as Buffer, { type: "buffer" });
+  const nodeBuf = Buffer.isBuffer(buf) ? buf : Buffer.from(buf);
+  const cfb = XLSX.CFB.read(nodeBuf, { type: "buffer" });
   const get = (path: string): Buffer | null => {
     const idx = cfb.FullPaths.indexOf("Root Entry/" + path);
     if (idx < 0) return null;

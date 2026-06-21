@@ -24,6 +24,10 @@ export abstract class BaseScraper {
     }) as unknown as Promise<Browser>;
   }
 
+  protected sleep(ms: number): Promise<void> {
+    return new Promise((r) => setTimeout(r, ms));
+  }
+
   protected async acceptCookies(page: Page, selector: string): Promise<void> {
     try {
       const btn = await page.waitForSelector(selector, { timeout: 10000 });

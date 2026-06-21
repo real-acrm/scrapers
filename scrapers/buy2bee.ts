@@ -37,6 +37,20 @@ const sleep = (ms: number): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, ms));
 const pause = (): Promise<void> => sleep(STEP_DELAY_MS);
 
+/**
+ * Inject `/N` between the catalog path and its query string.
+ *   /en/catalog/gender-mens?tag_4=clothing  →  /en/catalog/gender-mens/3?tag_4=clothing
+ *   /en/catalog/gender-mens                 →  /en/catalog/gender-mens/3
+ * If the URL is already paginated (path ends in `/<digit>`), the trailing
+ * segment is replaced.
+ */
+function buildPageUrl(baseUrl: string, pageNum: number): string {
+  const u = new URL(baseUrl);
+  const trimmed = u.pathname.replace(/\/\d+$/, "");
+  u.pathname = `${trimmed}/${pageNum}`;
+  return u.toString();
+}
+
 export class Buy2beeScraper extends BaseScraper {
   readonly id = "buy2bee";
   readonly displayName = "Buy2bee";
@@ -188,82 +202,140 @@ export class Buy2beeScraper extends BaseScraper {
         );
       }
 
-      let listViewToggled = false;
-      let catIdx = 0;
-      for (const cat of navs) {
-        catIdx++;
-        console.log(
-          `[${this.id}] -> category "${cat.label}" (${catIdx}/${navs.length})`,
-        );
-        let pageUrl = cat.href;
-        let pageNum = 1;
-        while (true) {
-          console.log(`[${this.id}]   page ${pageNum} of "${cat.label}"`);
-          await page.goto(pageUrl, { waitUntil: "domcontentloaded" });
-          await pause();
+      let l1Idx = 0;
+      for (const l1 of navs) {
+        l1Idx++;
+        console.log(`[${this.id}] -> L1 "${l1.label}" (${l1Idx}/${navs.length})`);
+        const cat4List = await this.readFilterAnchors(page, l1.href, "#filter-dropdown-4");
+        console.log(`[${this.id}]   ${cat4List.length} cat4 under "${l1.label}"`);
 
-          await this.dismissCountryPicker(page, "PL");
+        if (cat4List.length === 0) {
+          yield* this.scrapeLeaf(page, l1.href, [l1.label]);
+          continue;
+        }
 
-          if (!listViewToggled) {
-            const toggle = await page.$('label[for="list-option"]');
-            if (toggle) {
-              await toggle.click();
-              await page
-                .waitForSelector(".product-container.expanded", { timeout: 10000 })
-                .catch(() => {});
-              console.log(`[${this.id}] list view enabled`);
-              await pause();
-            }
-            listViewToggled = true;
+        let cat4Idx = 0;
+        for (const cat4 of cat4List) {
+          cat4Idx++;
+          console.log(
+            `[${this.id}]   cat4 "${cat4.name}" (${cat4Idx}/${cat4List.length}) under "${l1.label}"`,
+          );
+          const cat5List = await this.readFilterAnchors(page, cat4.href, "#filter-dropdown-5");
+
+          if (cat5List.length === 0) {
+            yield* this.scrapeLeaf(page, cat4.href, [l1.label, cat4.name]);
+            continue;
           }
-          await page
-            .waitForSelector(".product-container.expanded", { timeout: 20000 })
-            .catch(() => {});
 
-          const cards = await page.$$(".product-container.expanded");
-          console.log(`[${this.id}] found ${cards.length} cards on ${cat.label} page ${pageNum}`);
-          if (cards.length === 0) {
-            const body = await page.evaluate(() =>
-              document.body.innerText.slice(0, 400),
+          let cat5Idx = 0;
+          for (const cat5 of cat5List) {
+            cat5Idx++;
+            console.log(
+              `[${this.id}]     cat5 "${cat5.name}" (${cat5Idx}/${cat5List.length})`,
             );
-            console.warn(`[${this.id}] empty page; body sample: ${body}`);
-            break;
+            yield* this.scrapeLeaf(page, cat5.href, [l1.label, cat4.name, cat5.name]);
           }
-          for (const card of cards) {
-            try {
-              const raw = (await card.evaluate(
-                parseBuy2beeCard,
-              )) as RawBuy2beeProduct | null;
-              if (!raw) continue;
-              yield toScrapedProduct(raw, {
-                wholesalerId: this.id,
-                categoryPath: [cat.label],
-              });
-            } catch (err) {
-              console.error("parseBuy2beeCard error:", err);
-            }
-          }
-
-          const nextHref = await page.evaluate(() => {
-            const items = document.querySelectorAll("ul.pagination > li > a");
-            const last = items[items.length - 1] as HTMLAnchorElement | undefined;
-            if (!last) return null;
-            const isNext =
-              !!last.querySelector(".alt") &&
-              /Next page/i.test(last.querySelector(".alt")?.textContent ?? "");
-            return isNext ? last.href : null;
-          });
-          if (!nextHref || nextHref === pageUrl) {
-            console.log(`[${this.id}]   no more pages for "${cat.label}" (${pageNum} total)`);
-            break;
-          }
-          pageUrl = nextHref;
-          pageNum++;
         }
       }
     } finally {
       await browser.close();
     }
+  }
+
+  /**
+   * Navigate to the listing URL, then read the L2/L3 filter anchors out of
+   * the chosen dropdown. We read both visible and `li.filter.hide` items —
+   * "See all sottocategory" only flips CSS; the anchors are already in DOM.
+   */
+  private async readFilterAnchors(
+    page: Page,
+    url: string,
+    dropdownSel: string,
+  ): Promise<{ name: string; href: string }[]> {
+    await page.goto(url, { waitUntil: "domcontentloaded" });
+    await pause();
+    await this.dismissCountryPicker(page, "PL");
+    return page.evaluate((sel) => {
+      const root = document.querySelector(sel);
+      if (!root) return [];
+      return [...root.querySelectorAll("ul.filters-list li.filter a")]
+        .map((a) => ({
+          name: a.querySelector("label")?.textContent?.trim() ?? "",
+          href: (a as HTMLAnchorElement).href,
+        }))
+        .filter((x) => x.name && x.href);
+    }, dropdownSel);
+  }
+
+  /**
+   * Scrape every page of a single leaf URL. Reads maxPage from the highest
+   * numeric anchor in `ul.pagination`, then navigates `/N` for N=1..maxPage —
+   * because buy2bee's "Next page" anchor is actually a "jump to last shown
+   * page" button and would skip every page in between.
+   */
+  private async *scrapeLeaf(
+    page: Page,
+    leafUrl: string,
+    categoryPath: string[],
+  ): AsyncGenerator<ScrapedProduct> {
+    await page.goto(leafUrl, { waitUntil: "domcontentloaded" });
+    await pause();
+    await this.dismissCountryPicker(page, "PL");
+    await this.ensureListView(page);
+
+    const maxPage = await page.evaluate(() => {
+      const nums = [...document.querySelectorAll("ul.pagination > li > a")]
+        .map((a) => parseInt((a.textContent ?? "").trim(), 10))
+        .filter((n) => Number.isFinite(n));
+      return nums.length > 0 ? Math.max(...nums) : 1;
+    });
+    console.log(`[${this.id}]       ${maxPage} page(s) — ${categoryPath.join(" / ")}`);
+
+    for (let pageNum = 1; pageNum <= maxPage; pageNum++) {
+      if (pageNum > 1) {
+        await page.goto(buildPageUrl(leafUrl, pageNum), { waitUntil: "domcontentloaded" });
+        await pause();
+        await this.dismissCountryPicker(page, "PL");
+        await this.ensureListView(page);
+      }
+      await page
+        .waitForSelector(".product-container.expanded", { timeout: 20000 })
+        .catch(() => {});
+
+      const cards = await page.$$(".product-container.expanded");
+      console.log(`[${this.id}]         page ${pageNum}/${maxPage}: ${cards.length} cards`);
+      if (cards.length === 0) {
+        const body = await page.evaluate(() => document.body.innerText.slice(0, 400));
+        console.warn(`[${this.id}] empty page; body sample: ${body}`);
+        break;
+      }
+      for (const card of cards) {
+        try {
+          const raw = (await card.evaluate(parseBuy2beeCard)) as RawBuy2beeProduct | null;
+          if (!raw) continue;
+          yield toScrapedProduct(raw, { wholesalerId: this.id, categoryPath });
+        } catch (err) {
+          console.error("parseBuy2beeCard error:", err);
+        }
+      }
+    }
+  }
+
+  /**
+   * Click the list-view toggle if the page isn't already in list view. Cheap
+   * and idempotent — re-run after every navigation since the view preference
+   * doesn't survive URL changes in this skin.
+   */
+  private async ensureListView(page: Page): Promise<void> {
+    const already = await page.$(".product-container.expanded");
+    if (already) return;
+    const toggle = await page.$('label[for="list-option"]');
+    if (!toggle) return;
+    await toggle.click();
+    await page
+      .waitForSelector(".product-container.expanded", { timeout: 10000 })
+      .catch(() => {});
+    await pause();
   }
 
   private async dismissCountryPicker(page: Page, countryCode: string): Promise<void> {

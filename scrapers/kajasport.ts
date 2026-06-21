@@ -31,6 +31,8 @@ export class KajasportScraper extends BaseScraper {
       await page.goto(`${this.homeUrl}/login.php`, {
         waitUntil: "domcontentloaded",
       });
+      await this.sleep(5000);
+
       // Cookie banner — try the "accept all" id, fall back to text-based click.
       await this.acceptCookies(page, "#acceptAll");
       try {
@@ -38,10 +40,16 @@ export class KajasportScraper extends BaseScraper {
       } catch {
         // banner already gone
       }
+      await this.sleep(2000);
+
       await page.type('input[name="login"]', login);
+      await this.sleep(1000);
       await page.type('input[name="password"]', password);
+      await this.sleep(1000);
       await this.clickByText(page, "button", "Zaloguj się");
-      await page.waitForSelector("li.nav-item");
+      // Give the form-submit navigation room to complete before the next goto;
+      // `li.nav-item` matches pre-login too, so a fixed wait is more reliable.
+      await this.sleep(5000);
 
       // Flip product listings to list view (the only layout that exposes the
       // markup the shared parser expects). settings.php persists the choice
@@ -49,6 +57,7 @@ export class KajasportScraper extends BaseScraper {
       await page.goto(`${this.homeUrl}/settings.php?search_display_mode=list`, {
         waitUntil: "domcontentloaded",
       });
+      await this.sleep(2000);
 
       const topCategories = [
         "ODZIEŻ",

@@ -25,3 +25,4 @@ coverage/
 
 # Google service account (legacy, do not commit)
 scraper-*.json
+var/sqld-keys/

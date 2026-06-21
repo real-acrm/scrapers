@@ -1,37 +1,5 @@
 import { z } from "@hono/zod-openapi";
 
-export const WholesalerSchema = z
-  .object({
-    id: z.string().openapi({ example: "naleo" }),
-    name: z.string().openapi({ example: "B2B Naleo" }),
-    url: z.string().openapi({ example: "https://b2b-naleo.pl" }),
-    last_scraped_at: z.string().nullable(),
-  })
-  .openapi("Wholesaler");
-
-export const BrandSchema = z
-  .object({
-    name: z.string(),
-    product_count: z.number().int(),
-  })
-  .openapi("Brand");
-
-export type CategoryNode = {
-  id: number;
-  name: string;
-  parent_id: number | null;
-  children: CategoryNode[];
-};
-
-export const CategorySchema: z.ZodType<CategoryNode> = z
-  .object({
-    id: z.number().int(),
-    name: z.string(),
-    parent_id: z.number().int().nullable(),
-    children: z.lazy(() => z.array(CategorySchema)),
-  })
-  .openapi("Category");
-
 export const SnapshotSchema = z
   .object({
     scraped_at: z.string(),
@@ -74,19 +42,6 @@ export const ProductDetailSchema = ProductListItemSchema.extend({
   updated_at: z.string(),
   variants: z.array(VariantSchema),
 }).openapi("ProductDetail");
-
-export const HistoryRowSchema = z
-  .object({
-    variant_id: z.number().int(),
-    variant_key: z.string(),
-    scraped_at: z.string(),
-    price: z.number().nullable(),
-    lowest_price: z.number().nullable(),
-    regular_price: z.number().nullable(),
-    stock: z.number().int(),
-    delta_stock: z.number().int().nullable(),
-  })
-  .openapi("HistoryRow");
 
 export function PaginatedSchema<T extends z.ZodTypeAny>(item: T) {
   return z.object({
@@ -167,11 +122,8 @@ export const FacetsSchema = z
 
 export type Facets = z.infer<typeof FacetsSchema>;
 
-export type Wholesaler = z.infer<typeof WholesalerSchema>;
-export type Brand = z.infer<typeof BrandSchema>;
 export type Snapshot = z.infer<typeof SnapshotSchema>;
 export type Variant = z.infer<typeof VariantSchema>;
 export type ProductListItem = z.infer<typeof ProductListItemSchema>;
 export type ProductDetail = z.infer<typeof ProductDetailSchema>;
-export type HistoryRow = z.infer<typeof HistoryRowSchema>;
 export type ProductsQuery = z.infer<typeof ProductsQuerySchema>;

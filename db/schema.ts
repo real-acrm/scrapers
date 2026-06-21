@@ -183,21 +183,6 @@ export const variantSnapshots = pgTable(
   ],
 );
 
-export const apiKeys = pgTable(
-  "api_keys",
-  {
-    id: bigint("id", { mode: "number" })
-      .primaryKey()
-      .generatedAlwaysAsIdentity(),
-    key: text("key").notNull().unique(),
-    label: text("label").notNull(),
-    createdAt: text("created_at").notNull(),
-    lastUsedAt: text("last_used_at"),
-    revokedAt: text("revoked_at"),
-  },
-  (t) => [index("idx_api_keys_key").on(t.key)],
-);
-
 // Relations for the relational query API (db.query.products.findFirst({with: ...})).
 export const productsRelations = relations(products, ({ one, many }) => ({
   wholesaler: one(wholesalers, {
@@ -295,4 +280,3 @@ export type Category = InferSelectModel<typeof categories>;
 export type Product = InferSelectModel<typeof products>;
 export type Variant = InferSelectModel<typeof variants>;
 export type VariantSnapshot = InferSelectModel<typeof variantSnapshots>;
-export type ApiKey = InferSelectModel<typeof apiKeys>;

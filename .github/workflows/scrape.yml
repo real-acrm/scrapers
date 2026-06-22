@@ -49,6 +49,7 @@ on:
           - brandsdistribution
           - buy2bee
           - brandsgateway
+          - oversoles
 
 jobs:
   scrape:
@@ -68,6 +69,7 @@ jobs:
           - brandsdistribution
           - kajasport
           - naleo
+          - oversoles
     steps:
       - name: Gate
         id: gate
@@ -135,5 +137,8 @@ jobs:
           BRANDSGATEWAY_MEILI_HOST: ${{ secrets.BRANDSGATEWAY_MEILI_HOST }}
           BRANDSGATEWAY_MEILI_TOKEN: ${{ secrets.BRANDSGATEWAY_MEILI_TOKEN }}
           BRANDSGATEWAY_MODE: full
+          OVERSOLES_LOGIN: ${{ secrets.OVERSOLES_LOGIN }}
+          OVERSOLES_PASSWORD: ${{ secrets.OVERSOLES_PASSWORD }}
+          OVERSOLES_SESSION_B64: ${{ secrets.OVERSOLES_SESSION_B64 }}
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: xvfb-run --auto-servernum --server-args='-screen 0 1280x800x24' npm run scrape -- ${{ matrix.scraper }}

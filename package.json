@@ -1,5 +1,5 @@
 {
-  "name": "b2b-naleo-scraper",
+  "name": "b2b-scrapers",
   "private": true,
   "type": "module",
   "scripts": {
@@ -10,6 +10,9 @@
     "scrape:brandsdistribution": "npm run scrape -- brandsdistribution",
     "scrape:brandsgateway": "npm run scrape -- brandsgateway",
     "scrape:buy2bee": "npm run scrape -- buy2bee",
+    "scrape:oversoles": "npm run scrape -- oversoles",
+    "oversoles:refresh-cookies": "tsx scripts/oversoles-refresh-cookies.ts",
+    "oversoles:deploy": "bash scripts/deploy-macos.sh",
     "scrape:staging": "dotenv -e .env.staging -- npm run scrape",
     "scrape:prod": "dotenv -e .env.production -- npm run scrape",
     "db:push": "drizzle-kit push",
@@ -23,6 +26,7 @@
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.1.0",
+    "chrome-cookies-secure": "^3.0.2",
     "dotenv": "^16.6.1",
     "drizzle-orm": "^0.45.2",
     "playwright": "^1.49.0",

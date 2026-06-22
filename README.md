@@ -1,6 +1,6 @@
-# b2b-naleo-scraper
+# b2b-scrapers
 
-Scrapes B2B wholesaler catalogs into a libsql/Turso database and exposes a Hono API for downstream consumers. Currently wired to `b2b-naleo.pl`.
+Scrapes B2B wholesaler catalogs (naleo, kajasport, goldensneakers, brandsdistribution, brandsgateway, buy2bee, oversoles) into a Neon Postgres database via Drizzle ORM.
 
 ## Setup
 
@@ -26,18 +26,11 @@ Scrapes B2B wholesaler catalogs into a libsql/Turso database and exposes a Hono 
 
 Three env files, all gitignored except the example:
 
-| File              | Purpose                  | DB target                          |
-| ----------------- | ------------------------ | ---------------------------------- |
-| `.env`            | local dev (default)      | `file:./var/local.db`              |
-| `.env.staging`    | staging Turso DB         | `libsql://<db>-<org>.turso.io`     |
-| `.env.production` | production Turso DB      | `libsql://<db>-<org>.turso.io`     |
-
-Get Turso URL + token via:
-```bash
-turso db create naleo-staging
-turso db show naleo-staging --url
-turso db tokens create naleo-staging
-```
+| File              | Purpose             | DB target                                          |
+| ----------------- | ------------------- | -------------------------------------------------- |
+| `.env`            | local dev (default) | local Postgres or PGlite                           |
+| `.env.staging`    | staging Neon branch | `postgres://…@<branch>-pooler.neon.tech/b2b_scrapers` |
+| `.env.production` | production Neon     | `postgres://…@<branch>-pooler.neon.tech/b2b_scrapers` |
 
 ## Scripts
 

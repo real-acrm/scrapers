@@ -23,7 +23,7 @@ async function main(): Promise<void> {
           .map(
             (v) =>
               `${v.optionValues.map((o) => o.value).join("/")}@` +
-              `${v.price ?? "?"} ${v.currency}`,
+              `${v.price ?? "?"} ${v.currency} stock=${v.stock ?? "null"}`,
           )
           .join(", ")}`,
     );

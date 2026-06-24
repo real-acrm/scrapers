@@ -9,22 +9,20 @@ import type { ScrapedProduct, ScrapedVariant } from "../pipeline/types.js";
 
 let _stealthRegistered = false;
 
-type RawGriffatiVariant = {
-  size: string;
-  sku: string | null;
-  price: number | null;
-};
-
-type RawGriffatiProduct = {
+type RawGriffatiLite = {
   symbol: string;
   brand: string | null;
   name: string | null;
   image: string | null;
   href: string;
-  currency: "EUR";
+  listingPrice: number | null;
+  listingSrp: number | null;
+};
+
+type RawGriffatiVariant = {
+  size: string;
+  stock: number;
   price: number | null;
-  srp: number | null;
-  variants: RawGriffatiVariant[];
 };
 
 type Leaf = { href: string; path: string[] };
@@ -112,27 +110,39 @@ export class GriffatiScraper extends BaseScraper {
       await this.acceptCookieBanner(page);
       await pause();
 
-      await page.waitForSelector("#username", { timeout: 15000 });
-      await page.click("#username");
-      await page.type("#username", login, { delay: 100 });
-      await pause();
-      await page.click("#password");
-      await page.type("#password", password, { delay: 100 });
-      await pause();
-      await Promise.all([
-        page
-          .waitForNavigation({ waitUntil: "domcontentloaded", timeout: 30000 })
-          .catch(() => {}),
-        page.evaluate(() =>
-          (document.getElementById("login-form") as HTMLFormElement).submit(),
-        ),
-      ]);
-      await pause();
-
-      if (/\/(pl|en)\/login/.test(page.url())) {
-        throw new Error(`[${this.id}] login failed (still on /login)`);
+      // Persistent profile may already hold a valid session — the /login
+      // page redirects away once the auth cookie is present. Short-circuit
+      // the form fill in that case.
+      const alreadyLogged = await page.evaluate(() =>
+        document.body.classList.contains("logged"),
+      );
+      if (alreadyLogged) {
+        console.log(`[${this.id}] reused existing session (url=${page.url()})`);
+      } else {
+        await page.waitForSelector("#username", { timeout: 15000 });
+        await page.click("#username");
+        await page.type("#username", login, { delay: 100 });
+        await pause();
+        await page.click("#password");
+        await page.type("#password", password, { delay: 100 });
+        await pause();
+        await Promise.all([
+          page
+            .waitForNavigation({
+              waitUntil: "domcontentloaded",
+              timeout: 30000,
+            })
+            .catch(() => {}),
+          page.evaluate(() =>
+            (document.getElementById("login-form") as HTMLFormElement).submit(),
+          ),
+        ]);
+        await pause();
+        if (/\/(pl|en)\/login/.test(page.url())) {
+          throw new Error(`[${this.id}] login failed (still on /login)`);
+        }
+        console.log(`[${this.id}] logged in (url=${page.url()})`);
       }
-      console.log(`[${this.id}] logged in (url=${page.url()})`);
       await this.dismissLanguageModal(page);
       await this.acceptCookieBanner(page);
 
@@ -270,28 +280,36 @@ export class GriffatiScraper extends BaseScraper {
         .waitForSelector(".product-item", { timeout: 20000 })
         .catch(() => {});
 
-      const cards = await page.$$(".product-item");
+      // One $$eval lifts every card's lite-data into memory before we leave
+      // the listing page; subsequent navigations to detail URLs invalidate
+      // ElementHandles, so we can't iterate cards one-by-one.
+      const lites = (await page.$$eval(
+        ".product-item",
+        parseAllListingCards,
+      )) as RawGriffatiLite[];
       console.log(
-        `[${this.id}]      page ${pageNum}/${maxPage}: ${cards.length} cards`,
+        `[${this.id}]      page ${pageNum}/${maxPage}: ${lites.length} cards`,
       );
-      if (cards.length === 0) {
-        // End guard: Next/Prev arrows never disable on griffati, but an empty
-        // result page is a hard stop.
+      if (lites.length === 0) {
         break;
       }
 
-      for (const card of cards) {
+      for (const lite of lites) {
         try {
-          const raw = (await card.evaluate(
-            parseGriffatiCard,
-          )) as RawGriffatiProduct | null;
-          if (!raw) continue;
-          yield toScrapedProduct(raw, {
+          await page.goto(lite.href, { waitUntil: "domcontentloaded" });
+          await pause();
+          const variants = (await page.evaluate(
+            parseDetailSizeTable,
+          )) as RawGriffatiVariant[];
+          yield buildScrapedProduct(lite, variants, {
             wholesalerId: this.id,
             categoryPath: leaf.path,
           });
         } catch (err) {
-          console.error(`[${this.id}] parseGriffatiCard error:`, err);
+          console.error(
+            `[${this.id}] detail parse error (${lite.symbol}):`,
+            err,
+          );
         }
       }
     }
@@ -349,12 +367,17 @@ export class GriffatiScraper extends BaseScraper {
 }
 
 /**
- * Runs in the browser via card.evaluate. Parses one .product-item from
- * griffati's catalog grid. The card embeds full schema.org product +
- * ProductModel-per-size microdata, so we read sizes/prices from there
- * rather than relying on the visible sizes table.
+ * Runs in the browser via page.$$eval(".product-item", parseAllListingCards).
+ * Pulls every card's lite data in one round-trip so we can leave the listing
+ * page immediately; once we navigate to a detail URL, any ElementHandles into
+ * the prior listing become invalid.
+ *
+ * Stock isn't on the listing — only the product detail page exposes the
+ * Size/Availab/Price/Quantity table. Listing only gives us a deduped size
+ * badge list, which is informationally a subset of what the detail table
+ * carries, so we lift just identity/branding/price-hint here.
  */
-function parseGriffatiCard(el: Element): RawGriffatiProduct | null {
+function parseAllListingCards(els: Element[]): RawGriffatiLite[] {
   const parsePrice = (raw: string | null | undefined): number | null => {
     if (!raw) return null;
     const m = raw.match(/[\d.,]+/);
@@ -363,105 +386,124 @@ function parseGriffatiCard(el: Element): RawGriffatiProduct | null {
     return isNaN(n) ? null : n;
   };
 
-  const ds = (el as HTMLElement).dataset;
-  const symbol = ds.openreveal || (ds.url || "").split("/").filter(Boolean).pop();
-  if (!symbol) return null;
+  return els
+    .map((el): RawGriffatiLite | null => {
+      const ds = (el as HTMLElement).dataset;
+      const symbol =
+        ds.openreveal || (ds.url || "").split("/").filter(Boolean).pop();
+      if (!symbol) return null;
 
-  const dataUrl = ds.url || "";
-  const href = dataUrl
-    ? new URL(dataUrl, window.location.origin).href
-    : window.location.href;
+      const href = ds.url
+        ? new URL(ds.url, window.location.origin).href
+        : window.location.href;
 
-  // The first picture img is the primary product image. Multiple <picture>
-  // entries exist (alt views) — take the first.
-  const img = el.querySelector("picture img") as HTMLImageElement | null;
-  const image = img?.src || null;
+      const img = el.querySelector("picture img") as HTMLImageElement | null;
+      const image = img?.src || null;
 
-  // Top-level Product microdata sits at the start of the meta block.
-  const brand =
-    el.querySelector('[itemtype="http://schema.org/Product"] > meta[itemprop="brand"], meta[itemprop="brand"]')
-      ?.getAttribute("content")
-      ?.trim() || null;
-  const name =
-    el.querySelector('[itemtype="http://schema.org/Product"] > meta[itemprop="name"], meta[itemprop="name"]')
-      ?.getAttribute("content")
-      ?.trim() || null;
-
-  const price = parsePrice(
-    el.querySelector(".product-item__price")?.textContent,
-  );
-
-  // Retailer price (SRP) — the visible "Retailer price" pair sits inside
-  // .price-catalog.retailer; the value is the second .retailer-price.catalog.
-  const retailerPriceEls = el.querySelectorAll(
-    ".price-catalog.retailer .retailer-price.catalog",
-  );
-  const srp = parsePrice(retailerPriceEls[retailerPriceEls.length - 1]?.textContent);
-
-  // One ProductModel block per size — sku, price, model (= size), availability.
-  const modelEls = [
-    ...el.querySelectorAll('[itemtype="http://schema.org/ProductModel"]'),
-  ];
-  const variants: RawGriffatiVariant[] = modelEls
-    .map((m) => {
-      const size =
-        m.querySelector('meta[itemprop="model"]')?.getAttribute("content") ||
-        "";
-      const sku =
-        m.querySelector('meta[itemprop="sku"]')?.getAttribute("content") ||
+      // .product_brand = "Adidas Originals - Mężczyzna Sneakers Mężczyzna".
+      const productBrandText =
+        el.querySelector(".product_brand")?.textContent?.trim() || "";
+      const [brandPart, ...rest] = productBrandText.split(" - ");
+      const brand = brandPart?.trim() || null;
+      const category = rest.join(" - ").trim();
+      const name =
+        [brand, category].filter(Boolean).join(" ").trim() ||
+        img?.alt?.trim() ||
         null;
-      const vp = parsePrice(
-        m.querySelector('meta[itemprop="price"]')?.getAttribute("content"),
-      );
-      return { size: (size || "").trim(), sku, price: vp };
-    })
-    .filter((v) => v.size);
 
-  return {
-    symbol,
-    brand,
-    name,
-    image,
-    href,
-    currency: "EUR",
-    price,
-    srp,
-    variants,
-  };
+      const listingPrice = parsePrice(
+        el.querySelector(".product-item__price")?.textContent,
+      );
+      const retailerPriceEls = el.querySelectorAll(
+        ".price-catalog.retailer .retailer-price.catalog",
+      );
+      const listingSrp = parsePrice(
+        retailerPriceEls[retailerPriceEls.length - 1]?.textContent,
+      );
+
+      return {
+        symbol,
+        brand,
+        name,
+        image,
+        href,
+        listingPrice,
+        listingSrp,
+      };
+    })
+    .filter((x): x is RawGriffatiLite => x !== null);
 }
 
-function toScrapedProduct(
-  raw: RawGriffatiProduct,
+/**
+ * Runs in the browser via page.evaluate on a product detail page. Reads the
+ * Size/Availab/Price/Quantity rows from table.table-sizes — each <tr> with
+ * td.table-cell cells is one in-stock SKU.
+ */
+function parseDetailSizeTable(): RawGriffatiVariant[] {
+  const parsePrice = (raw: string | null | undefined): number | null => {
+    if (!raw) return null;
+    const m = raw.match(/[\d.,]+/);
+    if (!m) return null;
+    const n = parseFloat(m[0].replace(/\s/g, "").replace(",", "."));
+    return isNaN(n) ? null : n;
+  };
+
+  const table = document.querySelector("table.table-sizes");
+  if (!table) return [];
+
+  const out: RawGriffatiVariant[] = [];
+  const seen = new Set<string>();
+  for (const tr of table.querySelectorAll("tr")) {
+    const tds = tr.querySelectorAll("td.table-cell");
+    // Header rows use <th> — skip anything without 4 td.table-cell columns.
+    if (tds.length < 3) continue;
+    const size = (tds[0].textContent || "").trim();
+    const stock = parseInt(
+      (tds[1].textContent || "").replace(/[^\d]/g, ""),
+      10,
+    );
+    const price = parsePrice(tds[2].textContent);
+    if (!size || !Number.isFinite(stock)) continue;
+    // Defensive dedup: shouldn't happen in this table but cheap insurance.
+    if (seen.has(size)) continue;
+    seen.add(size);
+    out.push({ size, stock, price });
+  }
+  return out;
+}
+
+function buildScrapedProduct(
+  lite: RawGriffatiLite,
+  variantsRaw: RawGriffatiVariant[],
   ctx: { wholesalerId: string; categoryPath: string[] },
 ): ScrapedProduct {
-  const variants: ScrapedVariant[] = raw.variants.map((v) => ({
+  const variants: ScrapedVariant[] = variantsRaw.map((v) => ({
     optionValues: [{ optionName: "Rozmiar", value: v.size }],
-    price: v.price ?? raw.price,
-    ...(raw.srp !== null && { srp: raw.srp }),
-    currency: raw.currency,
-    ...(v.sku ? { sku: v.sku } : {}),
-    // griffati's schema.org markup only signals InStock/OutOfStock; no count.
-    // null = unknown, same convention as brandsgateway.
-    stock: null,
+    price: v.price ?? lite.listingPrice,
+    ...(lite.listingSrp !== null && { srp: lite.listingSrp }),
+    currency: "EUR" as const,
+    stock: v.stock,
   }));
 
   if (variants.length === 0) {
+    // Product page had no size table (sold out / unusual layout) — record
+    // a single zero-stock placeholder so the product still lands in the DB.
     variants.push({
       optionValues: [{ optionName: "Wariant", value: "default" }],
-      price: raw.price,
-      ...(raw.srp !== null && { srp: raw.srp }),
-      currency: raw.currency,
-      stock: null,
+      price: lite.listingPrice,
+      ...(lite.listingSrp !== null && { srp: lite.listingSrp }),
+      currency: "EUR" as const,
+      stock: 0,
     });
   }
 
   return {
     wholesalerId: ctx.wholesalerId,
-    symbol: raw.symbol,
-    name: raw.name ?? raw.symbol,
-    brand: raw.brand,
-    image: raw.image,
-    href: raw.href,
+    symbol: lite.symbol,
+    name: lite.name ?? lite.symbol,
+    brand: lite.brand,
+    image: lite.image,
+    href: lite.href,
     categoryPath: ctx.categoryPath,
     variants,
   };

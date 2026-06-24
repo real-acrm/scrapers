@@ -50,6 +50,7 @@ on:
           - buy2bee
           - brandsgateway
           - oversoles
+          - griffati
 
 jobs:
   scrape:
@@ -70,6 +71,7 @@ jobs:
           - kajasport
           - naleo
           - oversoles
+          - griffati
     steps:
       - name: Gate
         id: gate
@@ -140,5 +142,7 @@ jobs:
           OVERSOLES_LOGIN: ${{ secrets.OVERSOLES_LOGIN }}
           OVERSOLES_PASSWORD: ${{ secrets.OVERSOLES_PASSWORD }}
           OVERSOLES_SESSION_B64: ${{ secrets.OVERSOLES_SESSION_B64 }}
+          GRIFFATI_LOGIN: ${{ secrets.GRIFFATI_LOGIN }}
+          GRIFFATI_PASSWORD: ${{ secrets.GRIFFATI_PASSWORD }}
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: xvfb-run --auto-servernum --server-args='-screen 0 1280x800x24' npm run scrape -- ${{ matrix.scraper }}

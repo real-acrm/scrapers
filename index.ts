@@ -7,6 +7,7 @@ import { BrandsdistributionScraper } from "./scrapers/brandsdistribution.js";
 import { BrandsgatewayScraper } from "./scrapers/brandsgateway.js";
 import { Buy2beeScraper } from "./scrapers/buy2bee.js";
 import { OversolesScraper } from "./scrapers/oversoles.js";
+import { GriffatiScraper } from "./scrapers/griffati.js";
 import type { BaseScraper } from "./scrapers/base.js";
 
 const ALL: BaseScraper[] = [
@@ -17,6 +18,7 @@ const ALL: BaseScraper[] = [
   new BrandsgatewayScraper(),
   new Buy2beeScraper(),
   new OversolesScraper(),
+  new GriffatiScraper(),
 ];
 
 // Pick subset via CLI arg or SCRAPER env. Accepts comma-separated ids.

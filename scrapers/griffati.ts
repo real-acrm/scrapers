@@ -9,7 +9,7 @@ import type { ScrapedProduct, ScrapedVariant } from "../pipeline/types.js";
 
 let _stealthRegistered = false;
 
-type RawGriffatiLite = {
+type RawGriffatiCard = {
   symbol: string;
   brand: string | null;
   name: string | null;
@@ -17,6 +17,7 @@ type RawGriffatiLite = {
   href: string;
   listingPrice: number | null;
   listingSrp: number | null;
+  variants: RawGriffatiVariant[];
 };
 
 type RawGriffatiVariant = {
@@ -35,7 +36,8 @@ type Leaf = { href: string; path: string[] };
 const L1_REFS: string[] = ["men", "women", "accessories", "shoes"];
 const BAGS_FALLBACK_LABEL = "Torebki";
 
-const BAGS_LEAF_PATH = "/pl/wholesale?tag_4=accessories&tag_5=men-bags&tag_5=women-bags";
+const BAGS_LEAF_PATH =
+  "/pl/wholesale?tag_4=accessories&tag_5=men-bags&tag_5=women-bags";
 
 const STEP_DELAY_MS = 5000;
 const sleep = (ms: number): Promise<void> =>
@@ -90,9 +92,9 @@ export class GriffatiScraper extends BaseScraper {
     try {
       const page = await browser.newPage();
       // tsx/esbuild wraps top-level named functions with __name() for stack
-      // readability. When we serialize parseGriffatiCard into the page via
-      // .evaluate(), the wrapper references __name in the browser context
-      // where it doesn't exist. Shim it as identity before any script runs.
+      // readability. When we serialize functions into the page via .evaluate(),
+      // the wrapper references __name in the browser context where it doesn't
+      // exist. Shim it as identity before any script runs.
       await page.evaluateOnNewDocument(() => {
         (globalThis as unknown as { __name: (fn: unknown) => unknown }).__name =
           (fn) => fn;
@@ -246,6 +248,11 @@ export class GriffatiScraper extends BaseScraper {
     return raw;
   }
 
+  /**
+   * Scrape a single leaf category. In list-view mode Griffati renders the full
+   * table.table-sizes (size / stock / price) inline inside each product row —
+   * no detail page navigation needed at all.
+   */
   private async *scrapeLeaf(
     page: Page,
     leaf: Leaf,
@@ -257,9 +264,7 @@ export class GriffatiScraper extends BaseScraper {
     await this.ensureListView(page);
 
     const maxPage = await page.evaluate(() => {
-      const nums = [
-        ...document.querySelectorAll("ul.pagination > li > a"),
-      ]
+      const nums = [...document.querySelectorAll("ul.pagination > li > a")]
         .map((a) => parseInt((a.textContent ?? "").trim(), 10))
         .filter((n) => Number.isFinite(n));
       return nums.length > 0 ? Math.max(...nums) : 1;
@@ -276,68 +281,37 @@ export class GriffatiScraper extends BaseScraper {
         await pause();
         await this.ensureListView(page);
       }
+
       await page
-        .waitForSelector(".product-item", { timeout: 20000 })
+        .waitForSelector(".filter-results .row .row", { timeout: 20000 })
         .catch(() => {});
 
-      // One $$eval lifts every card's lite-data into memory before we leave
-      // the listing page; subsequent navigations to detail URLs invalidate
-      // ElementHandles, so we can't iterate cards one-by-one.
-      const lites = (await page.$$eval(
-        ".product-item",
+      // Each product in list-view is a .row > .small-12 > .row that contains
+      // the image column, the inline table.table-sizes, and the price/brand
+      // column — everything we need in a single $$eval, no per-product goto.
+      const cards = (await page.$$eval(
+        ".filter-results > .small-12 > .row",
         parseAllListingCards,
-      )) as RawGriffatiLite[];
-      console.log(
-        `[${this.id}]      page ${pageNum}/${maxPage}: ${lites.length} cards`,
-      );
-      if (lites.length === 0) {
-        break;
-      }
+      )) as RawGriffatiCard[];
 
-      for (const lite of lites) {
-        try {
-          // Some detail pages have slow third-party scripts (Klio chat,
-          // hotjar) that keep the lifecycle event from firing within 30s.
-          // Allow 60s, swallow the lifecycle timeout, then gate on the
-          // size table being present — that's the only DOM we actually need.
-          await page
-            .goto(lite.href, {
-              waitUntil: "domcontentloaded",
-              timeout: 60000,
-            })
-            .catch((err: Error) => {
-              console.warn(
-                `[${this.id}] ${lite.symbol}: nav lifecycle did not settle (${err.message}); proceeding`,
-              );
-            });
-          await pause();
-          const tableReady = await page
-            .waitForSelector("table.table-sizes", { timeout: 15000 })
-            .catch(() => null);
-          const variants = tableReady
-            ? ((await page.evaluate(
-                parseDetailSizeTable,
-              )) as RawGriffatiVariant[])
-            : [];
-          yield buildScrapedProduct(lite, variants, {
-            wholesalerId: this.id,
-            categoryPath: leaf.path,
-          });
-        } catch (err) {
-          console.error(
-            `[${this.id}] detail parse error (${lite.symbol}):`,
-            err,
-          );
-        }
+      console.log(
+        `[${this.id}]      page ${pageNum}/${maxPage}: ${cards.length} cards`,
+      );
+      if (cards.length === 0) break;
+
+      for (const card of cards) {
+        yield buildScrapedProduct(card, card.variants, {
+          wholesalerId: this.id,
+          categoryPath: leaf.path,
+        });
       }
     }
   }
 
   /**
-   * Flip to list view if the inactive "Layout list" icon is present. Both
-   * list and card layouts use identical .product-item markup, so this is
-   * cosmetic — but it matches the manual workflow and reduces per-page
-   * card count, which is gentler on the server.
+   * Flip to list view if the inactive "Layout list" icon is present. In list
+   * view the full size/stock table is rendered inline per card, which is what
+   * we rely on to avoid per-product detail page navigations.
    */
   private async ensureListView(page: Page): Promise<void> {
     const flipped = await page.evaluate(() => {
@@ -361,9 +335,7 @@ export class GriffatiScraper extends BaseScraper {
         if (style.display === "none" || style.visibility === "hidden")
           return false;
         const opts = [...modal.querySelectorAll("div")] as HTMLElement[];
-        const pl = opts.find(
-          (d) => (d.textContent || "").trim() === "Polski",
-        );
+        const pl = opts.find((d) => (d.textContent || "").trim() === "Polski");
         if (pl) pl.click();
         return !!pl;
       })
@@ -385,17 +357,17 @@ export class GriffatiScraper extends BaseScraper {
 }
 
 /**
- * Runs in the browser via page.$$eval(".product-item", parseAllListingCards).
- * Pulls every card's lite data in one round-trip so we can leave the listing
- * page immediately; once we navigate to a detail URL, any ElementHandles into
- * the prior listing become invalid.
+ * Runs in the browser via page.$$eval(".filter-results > .small-12 > .row", ...).
  *
- * Stock isn't on the listing — only the product detail page exposes the
- * Size/Availab/Price/Quantity table. Listing only gives us a deduped size
- * badge list, which is informationally a subset of what the detail table
- * carries, so we lift just identity/branding/price-hint here.
+ * In list-view mode each product row contains three columns:
+ *   - image column (.product-item)
+ *   - size table column (.product-item__table → table.table-sizes)
+ *   - price/brand column (.price-div)
+ *
+ * We pull everything — identity, brand, prices, and full variant table — in
+ * one round-trip per listing page with no per-product detail navigation.
  */
-function parseAllListingCards(els: Element[]): RawGriffatiLite[] {
+function parseAllListingCards(rows: Element[]): RawGriffatiCard[] {
   const parsePrice = (raw: string | null | undefined): number | null => {
     if (!raw) return null;
     const m = raw.match(/[\d.,]+/);
@@ -404,40 +376,71 @@ function parseAllListingCards(els: Element[]): RawGriffatiLite[] {
     return isNaN(n) ? null : n;
   };
 
-  return els
-    .map((el): RawGriffatiLite | null => {
-      const ds = (el as HTMLElement).dataset;
+  return rows
+    .map((row): RawGriffatiCard | null => {
+      // symbol from .product-code (e.g. "518902"), falling back to form data-id
+      const codeEl = row.querySelector(".product-code");
+      const form = row.querySelector(
+        "form.addtocart-form",
+      ) as HTMLFormElement | null;
       const symbol =
-        ds.openreveal || (ds.url || "").split("/").filter(Boolean).pop();
+        (codeEl?.textContent ?? "").trim() || form?.dataset.id || null;
       if (!symbol) return null;
 
-      const href = ds.url
-        ? new URL(ds.url, window.location.origin).href
-        : window.location.href;
+      // href from schema.org <meta itemprop="url"> — the canonical product URL
+      const hrefMeta = row.querySelector(
+        'meta[itemprop="url"]',
+      ) as HTMLMetaElement | null;
+      const href = hrefMeta?.content ?? window.location.href;
 
-      const img = el.querySelector("picture img") as HTMLImageElement | null;
-      const image = img?.src || null;
+      // image: first non-hidden picture > img
+      const img = row.querySelector("picture img") as HTMLImageElement | null;
+      const image = img?.src ?? null;
 
-      // .product_brand = "Adidas Originals - Mężczyzna Sneakers Mężczyzna".
-      const productBrandText =
-        el.querySelector(".product_brand")?.textContent?.trim() || "";
-      const [brandPart, ...rest] = productBrandText.split(" - ");
-      const brand = brandPart?.trim() || null;
-      const category = rest.join(" - ").trim();
-      const name =
-        [brand, category].filter(Boolean).join(" ").trim() ||
-        img?.alt?.trim() ||
-        null;
+      // brand from schema.org <meta itemprop="brand"> on the root Product node
+      // (not the ProductModel children)
+      const brandMeta = row.querySelector(
+        '[itemtype="http://schema.org/Product"] > meta[itemprop="brand"]',
+      ) as HTMLMetaElement | null;
+      const brand = brandMeta?.content?.trim() ?? null;
 
+      // name from .product-item__brand (e.g. "Antony Morato Jeans Uomo")
+      const nameEl = row.querySelector(".product-item__brand");
+      const name = (nameEl?.textContent ?? "").trim() || null;
+
+      // wholesale price from h2.product-item__price
       const listingPrice = parsePrice(
-        el.querySelector(".product-item__price")?.textContent,
+        row.querySelector("h2.product-item__price")?.textContent,
       );
-      const retailerPriceEls = el.querySelectorAll(
+
+      // retailer/SRP: last .retailer-price.catalog span (first is the label text)
+      const retailerEls = row.querySelectorAll(
         ".price-catalog.retailer .retailer-price.catalog",
       );
       const listingSrp = parsePrice(
-        retailerPriceEls[retailerPriceEls.length - 1]?.textContent,
+        retailerEls[retailerEls.length - 1]?.textContent,
       );
+
+      // variants from the inline table.table-sizes
+      // stock is read from input[data-max] — more reliable than td text which
+      // can carry whitespace or formatting noise.
+      const variants: RawGriffatiVariant[] = [];
+      const seen = new Set<string>();
+      for (const tr of row.querySelectorAll("table.table-sizes tbody tr")) {
+        const tds = tr.querySelectorAll("td.table-cell");
+        if (tds.length < 3) continue;
+        const size = (tds[0].textContent ?? "").trim();
+        const input = tr.querySelector(
+          "input.quantity-container",
+        ) as HTMLInputElement | null;
+        const stock = input
+          ? parseInt(input.dataset.max ?? "0", 10)
+          : parseInt((tds[1].textContent ?? "").replace(/[^\d]/g, ""), 10);
+        const price = parsePrice(tds[2].textContent);
+        if (!size || !Number.isFinite(stock) || seen.has(size)) continue;
+        seen.add(size);
+        variants.push({ size, stock, price });
+      }
 
       return {
         symbol,
@@ -447,69 +450,32 @@ function parseAllListingCards(els: Element[]): RawGriffatiLite[] {
         href,
         listingPrice,
         listingSrp,
+        variants,
       };
     })
-    .filter((x): x is RawGriffatiLite => x !== null);
-}
-
-/**
- * Runs in the browser via page.evaluate on a product detail page. Reads the
- * Size/Availab/Price/Quantity rows from table.table-sizes — each <tr> with
- * td.table-cell cells is one in-stock SKU.
- */
-function parseDetailSizeTable(): RawGriffatiVariant[] {
-  const parsePrice = (raw: string | null | undefined): number | null => {
-    if (!raw) return null;
-    const m = raw.match(/[\d.,]+/);
-    if (!m) return null;
-    const n = parseFloat(m[0].replace(/\s/g, "").replace(",", "."));
-    return isNaN(n) ? null : n;
-  };
-
-  const table = document.querySelector("table.table-sizes");
-  if (!table) return [];
-
-  const out: RawGriffatiVariant[] = [];
-  const seen = new Set<string>();
-  for (const tr of table.querySelectorAll("tr")) {
-    const tds = tr.querySelectorAll("td.table-cell");
-    // Header rows use <th> — skip anything without 4 td.table-cell columns.
-    if (tds.length < 3) continue;
-    const size = (tds[0].textContent || "").trim();
-    const stock = parseInt(
-      (tds[1].textContent || "").replace(/[^\d]/g, ""),
-      10,
-    );
-    const price = parsePrice(tds[2].textContent);
-    if (!size || !Number.isFinite(stock)) continue;
-    // Defensive dedup: shouldn't happen in this table but cheap insurance.
-    if (seen.has(size)) continue;
-    seen.add(size);
-    out.push({ size, stock, price });
-  }
-  return out;
+    .filter((x): x is RawGriffatiCard => x !== null);
 }
 
 function buildScrapedProduct(
-  lite: RawGriffatiLite,
+  card: RawGriffatiCard,
   variantsRaw: RawGriffatiVariant[],
   ctx: { wholesalerId: string; categoryPath: string[] },
 ): ScrapedProduct {
   const variants: ScrapedVariant[] = variantsRaw.map((v) => ({
     optionValues: [{ optionName: "Rozmiar", value: v.size }],
-    price: v.price ?? lite.listingPrice,
-    ...(lite.listingSrp !== null && { srp: lite.listingSrp }),
+    price: v.price ?? card.listingPrice,
+    ...(card.listingSrp !== null && { srp: card.listingSrp }),
     currency: "EUR" as const,
     stock: v.stock,
   }));
 
   if (variants.length === 0) {
-    // Product page had no size table (sold out / unusual layout) — record
-    // a single zero-stock placeholder so the product still lands in the DB.
+    // No size table found (sold out / unusual layout) — record a single
+    // zero-stock placeholder so the product still lands in the DB.
     variants.push({
       optionValues: [{ optionName: "Wariant", value: "default" }],
-      price: lite.listingPrice,
-      ...(lite.listingSrp !== null && { srp: lite.listingSrp }),
+      price: card.listingPrice,
+      ...(card.listingSrp !== null && { srp: card.listingSrp }),
       currency: "EUR" as const,
       stock: 0,
     });
@@ -517,11 +483,11 @@ function buildScrapedProduct(
 
   return {
     wholesalerId: ctx.wholesalerId,
-    symbol: lite.symbol,
-    name: lite.name ?? lite.symbol,
-    brand: lite.brand,
-    image: lite.image,
-    href: lite.href,
+    symbol: card.symbol,
+    name: card.name ?? card.symbol,
+    brand: card.brand,
+    image: card.image,
+    href: card.href,
     categoryPath: ctx.categoryPath,
     variants,
   };

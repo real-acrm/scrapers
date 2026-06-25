@@ -296,11 +296,29 @@ export class GriffatiScraper extends BaseScraper {
 
       for (const lite of lites) {
         try {
-          await page.goto(lite.href, { waitUntil: "domcontentloaded" });
+          // Some detail pages have slow third-party scripts (Klio chat,
+          // hotjar) that keep the lifecycle event from firing within 30s.
+          // Allow 60s, swallow the lifecycle timeout, then gate on the
+          // size table being present — that's the only DOM we actually need.
+          await page
+            .goto(lite.href, {
+              waitUntil: "domcontentloaded",
+              timeout: 60000,
+            })
+            .catch((err: Error) => {
+              console.warn(
+                `[${this.id}] ${lite.symbol}: nav lifecycle did not settle (${err.message}); proceeding`,
+              );
+            });
           await pause();
-          const variants = (await page.evaluate(
-            parseDetailSizeTable,
-          )) as RawGriffatiVariant[];
+          const tableReady = await page
+            .waitForSelector("table.table-sizes", { timeout: 15000 })
+            .catch(() => null);
+          const variants = tableReady
+            ? ((await page.evaluate(
+                parseDetailSizeTable,
+              )) as RawGriffatiVariant[])
+            : [];
           yield buildScrapedProduct(lite, variants, {
             wholesalerId: this.id,
             categoryPath: leaf.path,

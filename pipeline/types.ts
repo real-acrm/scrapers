@@ -1,7 +1,6 @@
 export type ScrapedVariant = {
   optionValues: { optionName: string; value: string }[];
   price: number | null;
-  lowestPrice?: number;
   regularPrice?: number;
   srp?: number;
   currency: "EUR" | "PLN";

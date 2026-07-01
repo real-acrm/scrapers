@@ -3,7 +3,6 @@ import type { ScrapedProduct, ScrapedVariant } from "../../pipeline/types.js";
 export type RawFlatVariant = {
   name: string;
   price: number | null;
-  lowestPrice?: number;
   regularPrice?: number;
   srp?: number;
   stock: number;
@@ -12,7 +11,6 @@ export type RawFlatVariant = {
 export type RawMultiVariant = {
   name: string;
   price: number | null;
-  lowestPrice?: number;
   regularPrice?: number;
   srp?: number;
   subvariants: { name: string; stock: number }[];
@@ -88,18 +86,6 @@ export function parseSearchListCard(productEl: Element): RawProductCard | null {
           )
         : null;
 
-      const rawLowest = block
-        .querySelector(".omnibus_price__value")
-        ?.textContent?.trim();
-      const lowestPrice = rawLowest
-        ? parseFloat(
-            rawLowest
-              .match(/[\d\s]+,\d+/)?.[0]
-              ?.replace(/\s/g, "")
-              .replace(",", ".") ?? "",
-          )
-        : undefined;
-
       const rawRegular = block
         .querySelector(".search_versions__maxprice del")
         ?.textContent?.trim();
@@ -138,8 +124,6 @@ export function parseSearchListCard(productEl: Element): RawProductCard | null {
       variants.push({
         name,
         price: price === null || isNaN(price) ? null : price,
-        ...(lowestPrice !== undefined &&
-          !isNaN(lowestPrice) && { lowestPrice }),
         ...(regularPrice !== undefined &&
           !isNaN(regularPrice) && { regularPrice }),
         ...(srp !== undefined && !isNaN(srp) && { srp }),
@@ -176,18 +160,6 @@ export function parseSearchListCard(productEl: Element): RawProductCard | null {
           )
         : null;
 
-      const rawLowest = sub
-        ?.querySelector(".omnibus_price__value")
-        ?.textContent?.trim();
-      const lowestPrice = rawLowest
-        ? parseFloat(
-            rawLowest
-              .match(/[\d\s]+,\d+/)?.[0]
-              ?.replace(/\s/g, "")
-              .replace(",", ".") ?? "",
-          )
-        : undefined;
-
       const rawRegular = sub
         ?.querySelector(".search_versions__maxprice del")
         ?.textContent?.trim();
@@ -215,8 +187,6 @@ export function parseSearchListCard(productEl: Element): RawProductCard | null {
       variantsMap.set(productId, {
         name,
         price: price === null || isNaN(price) ? null : price,
-        ...(lowestPrice !== undefined &&
-          !isNaN(lowestPrice) && { lowestPrice }),
         ...(regularPrice !== undefined &&
           !isNaN(regularPrice) && { regularPrice }),
         ...(srp !== undefined && !isNaN(srp) && { srp }),
@@ -275,7 +245,6 @@ export function toScrapedProduct(
             { optionName: "Rozmiar", value: sub.name },
           ],
           price: v.price,
-          lowestPrice: v.lowestPrice,
           regularPrice: v.regularPrice,
           srp: v.srp,
           currency: "PLN",
@@ -286,7 +255,6 @@ export function toScrapedProduct(
       variants.push({
         optionValues: [{ optionName: "Wariant", value: v.name }],
         price: v.price,
-        lowestPrice: v.lowestPrice,
         regularPrice: v.regularPrice,
         srp: v.srp,
         currency: "PLN",

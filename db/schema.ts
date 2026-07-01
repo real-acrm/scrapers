@@ -167,7 +167,6 @@ export const variantSnapshots = pgTable(
       .references(() => wholesalers.id),
     scrapedAt: text("scraped_at").notNull(),
     price: doublePrecision("price"),
-    lowestPrice: doublePrecision("lowest_price"),
     regularPrice: doublePrecision("regular_price"),
     srp: doublePrecision("srp"),
     currency: text("currency", { enum: ["EUR", "PLN"] }).notNull(),

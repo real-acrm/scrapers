@@ -229,7 +229,6 @@ export async function writeProductBatch(
       wholesalerId: w,
       scrapedAt,
       price: variant.price,
-      lowestPrice: variant.lowestPrice ?? null,
       regularPrice: variant.regularPrice ?? null,
       srp: variant.srp ?? null,
       currency: variant.currency,

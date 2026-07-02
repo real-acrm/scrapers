@@ -184,7 +184,7 @@ export async function writeProductBatch(
   }
 
   // Phase 6: variants multi-row.
-  const variantInputs = p.variants.map((v) => {
+  const variantInputsRaw = p.variants.map((v) => {
     const pairs = v.optionValues
       .map((ov) => ({ optionName: ov.optionName, valueName: ov.value }))
       .sort((a, b) => a.optionName.localeCompare(b.optionName));
@@ -193,6 +193,23 @@ export async function writeProductBatch(
       .join("|");
     return { variant: v, variantKey };
   });
+  // A product can surface the same option combination twice (e.g. an upstream
+  // feed / GraphQL node lists size "40" twice). Our identity is the variantKey,
+  // so collapse duplicates: otherwise the single multi-row INSERT below trips
+  // Postgres's "ON CONFLICT DO UPDATE cannot affect row a second time", and
+  // phase 7 would also write duplicate append-only snapshots. Prefer the row
+  // that carries stock so a duplicate never drops a real snapshot.
+  const variantByKey = new Map<string, (typeof variantInputsRaw)[number]>();
+  for (const input of variantInputsRaw) {
+    const existing = variantByKey.get(input.variantKey);
+    if (
+      !existing ||
+      (existing.variant.stock === null && input.variant.stock !== null)
+    ) {
+      variantByKey.set(input.variantKey, input);
+    }
+  }
+  const variantInputs = [...variantByKey.values()];
   const variantIdByKey = new Map<string, number>();
   if (variantInputs.length > 0) {
     const inserted = await db

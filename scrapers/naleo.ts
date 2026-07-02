@@ -1,12 +1,12 @@
 import "dotenv/config";
 import { BaseScraper } from "./base.js";
 import type { ScrapedProduct } from "../pipeline/types.js";
-import {
-  parseSearchListCard,
-  toScrapedProduct,
-  type RawProductCard,
-} from "./lib/searchListCard.js";
+import { createTemplateCapturer } from "./lib/graphqlVariants.js";
 import { extractSearchListNav } from "./lib/searchListNav.js";
+
+const CARD = ".search_list__product";
+const NEXT =
+  "li.pagination__element.--next:not(.--disabled) a.pagination__link";
 
 export class NaleoScraper extends BaseScraper {
   readonly id = "naleo";
@@ -20,8 +20,12 @@ export class NaleoScraper extends BaseScraper {
       throw new Error("NALEO_LOGIN/NALEO_PASSWORD env vars required");
 
     const browser = await this.launchBrowser();
+    // Run-scoped: never re-request a product from their API within one run.
+    const seenIds = new Set<string>();
     try {
       const page = await browser.newPage();
+      // Clone the site's own /graphql/v1/ query shape from its first native request.
+      const capturer = createTemplateCapturer(page);
       await page.setUserAgent(
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
       );
@@ -36,6 +40,9 @@ export class NaleoScraper extends BaseScraper {
       await page.type('input[name="password"]', password);
       await this.clickByText(page, "button", "Log in");
       await page.waitForSelector("li.nav-item");
+      // Page size (portions=300) is chosen on-page via the dropdown by
+      // ensurePortions() on the first category page (naleo default is 75); it
+      // then persists for the session.
 
       const sections = ["Kobieta", "Mężczyzna", "Dziecko", "Akcesoria"];
       console.log(`[${this.id}] ${sections.length} top categories: ${sections.join(", ")}`);
@@ -53,11 +60,9 @@ export class NaleoScraper extends BaseScraper {
           console.log(
             `[${this.id}] -> category "${cat.topCategory} > ${cat.category} > ${child.category}" (${leafIdx}/${totalLeaves})`,
           );
-          await page.goto(`${child.href}?portions=300`, {
-            waitUntil: "domcontentloaded",
-          });
+          await page.goto(child.href, { waitUntil: "domcontentloaded" });
           const ready = await page
-            .waitForSelector(".search_list__product", { timeout: 30000 })
+            .waitForSelector(CARD, { timeout: 30000 })
             .catch(() => null);
           if (!ready) {
             // Empty leaf category (or selector renamed). Skip it instead of
@@ -69,32 +74,15 @@ export class NaleoScraper extends BaseScraper {
             continue;
           }
 
-          yield* this.paginateAndYield(
-            page,
-            ".search_list__product",
-            "li.pagination__element.--next:not(.--disabled) a.pagination__link",
-            async (card) => {
-              const expand = await card.$("span.search_versions_toggle__show");
-              if (expand && (await expand.isVisible())) await expand.click();
-              await this.waitForNetworkIdle(page, "/graphql/v1/");
-              const more = await card.$("a[href='#moreSizes']");
-              if (more && (await more.isVisible())) await more.click();
-            },
-            async (card) => {
-              const raw = (await card.evaluate(
-                parseSearchListCard,
-              )) as RawProductCard | null;
-              if (!raw || !raw.symbol || !raw.title) return null;
-              return toScrapedProduct(raw, {
-                wholesalerId: this.id,
-                categoryPath: [
-                  cat.topCategory,
-                  cat.category,
-                  child.category,
-                ],
-              });
-            },
-          );
+          yield* this.paginateViaGraphql(page, {
+            wholesalerId: this.id,
+            cardSelector: CARD,
+            nextBtnSelector: NEXT,
+            categoryPath: [cat.topCategory, cat.category, child.category],
+            portions: 300,
+            seenIds,
+            getTemplate: () => capturer.get(),
+          });
         }
       }
     } finally {

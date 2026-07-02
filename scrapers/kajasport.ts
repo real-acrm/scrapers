@@ -1,12 +1,12 @@
 import "dotenv/config";
 import { BaseScraper } from "./base.js";
 import type { ScrapedProduct } from "../pipeline/types.js";
-import {
-  parseSearchListCard,
-  toScrapedProduct,
-  type RawProductCard,
-} from "./lib/searchListCard.js";
+import { createTemplateCapturer } from "./lib/graphqlVariants.js";
 import { extractSearchListNav } from "./lib/searchListNav.js";
+
+const CARD = ".search_list__product";
+const NEXT =
+  "li.pagination__element.--next:not(.--disabled) a.pagination__link";
 
 export class KajasportScraper extends BaseScraper {
   readonly id = "kajasport";
@@ -20,8 +20,12 @@ export class KajasportScraper extends BaseScraper {
       throw new Error("KAJA_LOGIN/KAJA_PASSWORD env vars required");
 
     const browser = await this.launchBrowser();
+    // Run-scoped: never re-request a product from their API within one run.
+    const seenIds = new Set<string>();
     try {
       const page = await browser.newPage();
+      // Clone the site's own /graphql/v1/ query shape from its first native request.
+      const capturer = createTemplateCapturer(page);
       await page.setUserAgent(
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
       );
@@ -58,6 +62,8 @@ export class KajasportScraper extends BaseScraper {
         waitUntil: "domcontentloaded",
       });
       await this.sleep(2000);
+      // Page size (portions=300) is chosen on-page via the dropdown by
+      // ensurePortions() on the first category page; it persists for the session.
 
       const topCategories = [
         "ODZIEŻ",
@@ -112,35 +118,18 @@ export class KajasportScraper extends BaseScraper {
           console.log(
             `[${this.id}] -> category "${t.label}" (${targetIdx}/${totalTargets})`,
           );
-          await page.goto(`${t.href}?portions=300`, {
-            waitUntil: "domcontentloaded",
-          });
-          await page.waitForSelector(".search_list__product", {
-            timeout: 30000,
-          });
+          await page.goto(t.href, { waitUntil: "domcontentloaded" });
+          await page.waitForSelector(CARD, { timeout: 30000 });
 
-          yield* this.paginateAndYield(
-            page,
-            ".search_list__product",
-            "li.pagination__element.--next:not(.--disabled) a.pagination__link",
-            async (card) => {
-              const expand = await card.$("span.search_versions_toggle__show");
-              if (expand && (await expand.isVisible())) await expand.click();
-              await this.waitForNetworkIdle(page, "/graphql/v1/");
-              const more = await card.$("a[href='#moreSizes']");
-              if (more && (await more.isVisible())) await more.click();
-            },
-            async (card) => {
-              const raw = (await card.evaluate(
-                parseSearchListCard,
-              )) as RawProductCard | null;
-              if (!raw || !raw.symbol || !raw.title) return null;
-              return toScrapedProduct(raw, {
-                wholesalerId: this.id,
-                categoryPath: t.path,
-              });
-            },
-          );
+          yield* this.paginateViaGraphql(page, {
+            wholesalerId: this.id,
+            cardSelector: CARD,
+            nextBtnSelector: NEXT,
+            categoryPath: t.path,
+            portions: 300,
+            seenIds,
+            getTemplate: () => capturer.get(),
+          });
         }
       }
     } finally {

@@ -264,7 +264,12 @@ export function chunkForBatches(ids: string[]): string[][] {
   return chunks;
 }
 
-/** Irregular, sensible inter-batch delay (ms) with the occasional longer pause. */
+/**
+ * Irregular, human-paced inter-batch delay (ms). A real user scrolls and lets
+ * products load into view over seconds — not a machine-gun of requests. Most
+ * gaps are 2–6s; ~25% of the time a longer 7–15s "reading/scrolling" pause.
+ * Mean ≈ 6s per batch, so a ~3–4-product batch lands well under native rates.
+ */
 export function jitterMs(): number {
-  return Math.random() < 0.15 ? randInt(2500, 6000) : randInt(400, 2500);
+  return Math.random() < 0.25 ? randInt(7000, 15000) : randInt(2000, 6000);
 }

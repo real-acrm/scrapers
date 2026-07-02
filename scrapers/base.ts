@@ -209,45 +209,83 @@ export abstract class BaseScraper {
   }
 
   /**
-   * Ensure the listing page-size ("portions") is `size` by choosing it in the
-   * on-page dropdown — like a user would — rather than hitting settings.php with
-   * a query param. The choice is client-side and persists for the session, so
-   * this is a no-op (no interaction) on every page after the first, and only
-   * re-applies if the value drifted.
+   * Ensure the listing shows as many products per page as possible, by choosing
+   * the **largest available** "portions" option in the page's own on-page
+   * dropdown — like a user would.
+   *
+   * Verified against the live site (Playwright audit, 2026-07):
+   * - `#select_top_portions` is a *hidden, inert* native <select> wrapped in a
+   *   custom `.f-dropdown` widget: a `.f-dropdown-toggle` button + a
+   *   `<ul.f-dropdown-menu>` of `<a.f-dropdown-item data-value="N">`. Setting the
+   *   <select>'s value or dispatching `change` only updates the visual label —
+   *   it does NOT reload. Selection happens by **clicking the menu item**, and
+   *   the list re-renders via **AJAX (no navigation)**.
+   * - The option set is **per-category**: a small category caps below 300 (e.g.
+   *   210), a large one goes up to 300. So we target the largest option present,
+   *   never a hardcoded 300.
+   * - The dropdown is absent entirely when a category is too small to paginate —
+   *   that means everything is already shown, so skip.
+   *
+   * `size` is treated as an upper cap (defaults to 300); we pick the largest
+   * option ≤ `size`. Called on every listing page — the choice does NOT persist
+   * across categories (each fresh category resets to its default ~30).
    */
   protected async ensurePortions(
     page: Page,
     size: number,
     cardSelector: string,
   ): Promise<void> {
-    const current = await page
-      .$eval("#select_top_portions", (el) => (el as HTMLSelectElement).value)
-      .catch(() => null);
-    if (current === null || current === String(size)) return;
+    // Inspect the widget: present? largest option ≤ cap? already selected?
+    const state = await page.evaluate(
+      (cap, cardSel) => {
+        const sel = document.querySelector(
+          "#select_top_portions",
+        ) as HTMLSelectElement | null;
+        const cards = document.querySelectorAll(cardSel).length;
+        if (!sel) return { present: false, largest: 0, atLargest: true, cards };
+        const values = [...sel.options]
+          .map((o) => Number(o.value))
+          .filter((n) => !Number.isNaN(n) && n <= cap);
+        const largest = values.length ? Math.max(...values) : 0;
+        return {
+          present: true,
+          largest,
+          atLargest: largest === 0 || Number(sel.value) === largest,
+          cards,
+        };
+      },
+      size,
+      cardSelector,
+    );
 
-    // Prefer the visible dropdown item (native user gesture); fall back to
-    // setting the underlying <select> and firing its change event.
-    const item = await page.$(`.f-dropdown-item[data-value="${size}"]`);
-    if (item) {
-      const toggle = await page.$(
-        ".s_paging__item.--portions .f-dropdown-toggle",
-      );
-      if (toggle) await toggle.click().catch(() => {});
-      await item.evaluate((el) => (el as HTMLElement).click());
-    } else {
-      await page.$eval(
-        "#select_top_portions",
-        (el, v) => {
-          const sel = el as HTMLSelectElement;
-          sel.value = v as string;
-          sel.dispatchEvent(new Event("change", { bubbles: true }));
-        },
-        String(size),
-      );
-    }
+    if (!state.present || state.atLargest) return;
 
-    // The list re-renders (full reload or AJAX). Settle, then confirm cards.
-    await page.waitForNetworkIdle({ idleTime: 500, timeout: 15000 }).catch(() => {});
+    const before = state.cards;
+    // Click the largest menu item. The handler is delegated, so a click lands
+    // even with the menu closed; we open the toggle first anyway, user-like.
+    await page.evaluate((largest) => {
+      const sel = document.querySelector("#select_top_portions");
+      const widget = sel ? sel.closest(".f-dropdown") : null;
+      if (!widget) return;
+      const toggle = widget.querySelector(".f-dropdown-toggle");
+      if (toggle) (toggle as HTMLElement).click();
+      const item = widget.querySelector(
+        `.f-dropdown-item[data-value="${largest}"]`,
+      );
+      if (item) (item as HTMLElement).click();
+    }, state.largest);
+
+    // AJAX re-render (no navigation): wait for the network to settle and the
+    // card count to grow past what was shown before.
+    await page.waitForNetworkIdle({ idleTime: 600, timeout: 20000 }).catch(() => {});
+    await page
+      .waitForFunction(
+        (sel, n) => document.querySelectorAll(sel as string).length > (n as number),
+        { timeout: 20000 },
+        cardSelector,
+        before,
+      )
+      .catch(() => {});
     await page.waitForSelector(cardSelector, { timeout: 30000 }).catch(() => {});
   }
 
@@ -349,7 +387,9 @@ export abstract class BaseScraper {
       const freshById = new Map(fresh.map((v) => [v.id, v]));
       const chunks = chunkForBatches(fresh.map((v) => v.id));
       for (let c = 0; c < chunks.length; c++) {
-        if (c > 0) await this.sleep(jitterMs());
+        // Pace before every batch (incl. the first on a page) — simulate a user
+        // scrolling and letting products load into view, not machine-gunning.
+        await this.sleep(jitterMs());
         let nodes: Awaited<ReturnType<typeof fetchBatch>>;
         try {
           nodes = await fetchBatch(page, chunks[c], opts.getTemplate());

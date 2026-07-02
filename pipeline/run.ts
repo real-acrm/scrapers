@@ -8,6 +8,22 @@ import type { BaseScraper } from "../scrapers/base.js";
 // concurrency is fine. 16 was the original pre-libsql-throttle value.
 const WRITE_CONCURRENCY = Number(process.env.WRITE_CONCURRENCY ?? "16");
 
+async function refreshStorefrontMvs(): Promise<void> {
+  const url = process.env.STOREFRONT_URL;
+  const secret = process.env.CRON_SECRET;
+  if (!url || !secret) return;
+  try {
+    const res = await fetch(`${url}/api/cron/refresh-mvs`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${secret}` },
+    });
+    if (!res.ok) console.error(`[mv-refresh] HTTP ${res.status}`);
+    else console.log("[mv-refresh] done");
+  } catch (err) {
+    console.error("[mv-refresh] error:", err);
+  }
+}
+
 export async function runScrapers(scrapers: BaseScraper[]): Promise<void> {
   const db = getDb();
   const failed: string[] = [];
@@ -57,6 +73,7 @@ export async function runScrapers(scrapers: BaseScraper[]): Promise<void> {
       failed.push(s.id);
     }
   }
+  await refreshStorefrontMvs();
   if (failed.length > 0) {
     throw new Error(`scrapers failed: ${failed.join(", ")}`);
   }
